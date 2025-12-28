@@ -51,12 +51,10 @@ def device_to_use():
 
 
 def ddp_setup():
-    backend = None
     if dist.is_nccl_available():
-        backend = "nccl"
+        dist.init_process_group(backend="nccl", device_id=device_to_use())
     elif dist.is_gloo_available():
-        backend = "gloo"
-    dist.init_process_group(backend=backend)
+        dist.init_process_group(backend="gloo")
 
 
 def ddp_teardown():
