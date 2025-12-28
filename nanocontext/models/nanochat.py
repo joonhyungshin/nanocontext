@@ -63,7 +63,7 @@ class Nanochat(nn.Module):
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
 
-    def _precompute_rotary_embd(self, seq_len, head_dim, base=100000, device=None):
+    def _precompute_rotary_embd(self, seq_len, head_dim, base=10000, device=None):
         if device is None:
             device = self.transformer.wte.weight.device
         channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)

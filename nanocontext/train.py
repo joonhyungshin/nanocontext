@@ -64,7 +64,7 @@ class NanochatTrainer:
                 opt.step()
             self.compiled_model.zero_grad(set_to_none=True)
             step += 1
-            echo(f"Step {step} done")
+            echo(f"Step {step} done with loss {train_loss.item()}")
 
     def get_optimizers(self):
         model_dim = self.model.config.n_embd

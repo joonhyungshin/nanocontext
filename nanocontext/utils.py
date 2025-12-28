@@ -88,9 +88,7 @@ def rotary_emb_attn(x, cos, sin):
     x1, x2 = x[..., :d], x[..., d:]
     y1 = x1 * cos + x2 * sin
     y2 = x1 * (-sin) + x2 * cos
-    out = torch.cat([y1, y2], dim=3)
-    out = out.to(x.dtype)
-    return out
+    return torch.cat([y1, y2], dim=3)
 
 
 def d_order(n, d):
