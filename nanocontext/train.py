@@ -62,7 +62,7 @@ class NanochatTrainer:
                         group["momentum"] = muon_momentum
             for opt in self.optimizers:
                 opt.step()
-            self.model.zero_grad(set_to_none=True)
+            self.compiled_model.zero_grad(set_to_none=True)
             step += 1
             echo(f"Step {step} done")
 

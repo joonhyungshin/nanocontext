@@ -7,7 +7,7 @@ import math
 import torch
 import torch.nn.functional as F
 from torch import nn
-from nanocontext.utils import rms_norm
+from nanocontext.utils import rms_norm, autocast
 
 from .attention import CausalSelfAttention
 
@@ -112,7 +112,8 @@ class Nanochat(nn.Module):
                 rng.manual_seed(seed)
         x = torch.tensor([tokens], dtype=torch.long, device=self.device)
         for _ in range(max_tokens):
-            logits = self.forward(x)
+            with autocast():
+                logits = self.forward(x)
             logits = logits[:, -1, :]
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
