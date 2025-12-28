@@ -33,6 +33,7 @@ def cli():
 @click.option("--warmup-ratio", help="warmup ratio in LR scheduler", default=0.0, type=float)
 @click.option("--warmdown-ratio", help="warmdown ratio in LR scheduler", default=0.2, type=float)
 @click.option("--final-lr", help="final learning rate in LR scheduler", default=0.0, type=float)
+@click.option("--num-iterations", help="number of iterations", type=int)
 @click.option("--param-data-ratio", help="parameter:data ratio", default=20, type=int)
 @click.option("--save-to", help="path to save model", type=str, required=True)
 @click.option("--buffer-size", help="buffer size to stream a tree", default=1024, type=int)
@@ -41,7 +42,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
           context_len, vocab_size, layers, heads, kv_heads, model_dim,
           unembedding_lr, embedding_lr, matrix_lr, weight_decay,
           warmup_ratio, warmdown_ratio, final_lr,
-          param_data_ratio,
+          num_iterations, param_data_ratio,
           save_to,
           buffer_size, seed):
     batch_height = 0
@@ -59,6 +60,10 @@ def train(d, rho, height, device_batch_size, total_batch_size,
                                          final_lr_frac=final_lr)
     with torch.device("meta"):
         model = Nanochat(model_conf)
+    if not num_iterations:
+        num_params = sum(p.numel() for p in model.parameters())
+        target_tokens = param_data_ratio * num_params
+        num_iterations = target_tokens // total_batch_size
     with ddp_context():
         rng = np.random.default_rng(seed=[ddp_rank(), seed])
         device = device_to_use()
@@ -66,12 +71,11 @@ def train(d, rho, height, device_batch_size, total_batch_size,
         grad_accum_steps = total_batch_size // world_tokens
         model.to_empty(device=device)
         model.init_weights()
-        # num_params = sum(p.numel() for p in model.parameters())
         dataloader = broadcast_tree_data_loader(d, rho, height,
                                                 device_batch_size, context_len, batch_height, vocab_size,
                                                 seed=rng)
         trainer = NanochatTrainer(trainer_conf, model, dataloader)
-        trainer.train(10, grad_accum_steps)
+        trainer.train(num_iterations, grad_accum_steps)
         save_model(model.state_dict(), save_to)
 
 
