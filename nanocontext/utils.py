@@ -67,8 +67,10 @@ def ddp_teardown():
 def ddp_context():
     if dist.is_torchelastic_launched():
         ddp_setup()
+        dist.barrier()
     try:
         if torch.cuda.is_available():
+            torch.backends.cuda.matmul.fp32_precision = "tf32"
             with torch.cuda.device(device_to_use()):
                 yield
         else:
