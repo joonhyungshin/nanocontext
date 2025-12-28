@@ -51,7 +51,7 @@ def device_to_use():
 
 
 def ddp_setup():
-    if dist.is_nccl_available():
+    if dist.is_nccl_available() and torch.cuda.is_available():
         dist.init_process_group(backend="nccl", device_id=device_to_use())
     elif dist.is_gloo_available():
         dist.init_process_group(backend="gloo")

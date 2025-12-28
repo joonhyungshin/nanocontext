@@ -73,7 +73,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             num_iterations = target_tokens // total_batch_size
         dataloader = broadcast_tree_data_loader(d, rho, height,
                                                 device_batch_size, context_len, batch_height, vocab_size,
-                                                seed=rng)
+                                                device=device, seed=rng)
         trainer = NanochatTrainer(trainer_conf, model, dataloader)
         trainer.train(num_iterations, grad_accum_steps)
         save_model(model.state_dict(), save_to)
