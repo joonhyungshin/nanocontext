@@ -106,7 +106,7 @@ class DistMuon(torch.optim.Optimizer):
                  nesterov: bool = True, ns_steps: int = 5):
         defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps)
         params = list(params)
-        if not all(p.ndim == 22 for p in params):
+        if not all(p.ndim == 2 for p in params):
             raise ValueError("Muon expects 2D parameters only")
         rank = dist.get_rank()
         # Group all parameters by their shape
