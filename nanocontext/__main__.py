@@ -58,19 +58,19 @@ def train(d, rho, height, device_batch_size, total_batch_size,
                                          weight_decay=weight_decay,
                                          warmup_ratio=warmup_ratio, warmdown_ratio=warmdown_ratio,
                                          final_lr_frac=final_lr)
-    with torch.device("meta"):
-        model = Nanochat(model_conf)
-    if not num_iterations:
-        num_params = sum(p.numel() for p in model.parameters())
-        target_tokens = param_data_ratio * num_params
-        num_iterations = target_tokens // total_batch_size
     with ddp_context():
         rng = np.random.default_rng(seed=[ddp_rank(), seed])
         device = device_to_use()
         world_tokens = device_batch_size * context_len * ddp_world_size()
         grad_accum_steps = total_batch_size // world_tokens
+        with torch.device("meta"):
+            model = Nanochat(model_conf)
         model.to_empty(device=device)
         model.init_weights()
+        if not num_iterations:
+            num_params = sum(p.numel() for p in model.parameters())
+            target_tokens = param_data_ratio * num_params
+            num_iterations = target_tokens // total_batch_size
         dataloader = broadcast_tree_data_loader(d, rho, height,
                                                 device_batch_size, context_len, batch_height, vocab_size,
                                                 seed=rng)
