@@ -19,7 +19,7 @@ def cli():
 @click.option("--rho", help="correlation", type=float, required=True)
 @click.option("--height", help="height of a tree", type=int, required=True)
 @click.option("--device-batch-size", help="batch size per device", default=32, type=int)
-@click.option("--total-batch_size", help="total batch size in training", default=524288, type=int)
+@click.option("--total-batch-size", help="total batch size in training", default=524288, type=int)
 @click.option("--context-size", "context_len", help="context length", default=2048, type=int)
 @click.option("--vocab-size", help="vocab size", default=32, type=int)
 @click.option("--layers", help="number of layers", default=20, type=int)
