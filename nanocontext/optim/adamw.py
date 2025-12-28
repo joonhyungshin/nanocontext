@@ -26,11 +26,12 @@ class DistAdamW(torch.optim.Optimizer):
                     raise ValueError(f"first dim of parameter shape {params[base_i].shape} is "
                                      f"not a multiple of world_size {world_size}")
                 grad = params[base_i].grad
-                rank_size = grad.shape[0]
+                rank_size = grad.shape[0] // world_size
                 grad_slice = torch.empty_like(grad[:rank_size])
                 reduce_scatter_futures.append(dist.reduce_scatter_tensor(
                     grad_slice, grad, op=dist.ReduceOp.AVG, async_op=True
                 ).get_future())
+                grad_slices.append(grad_slice)
         idx = 0
         for group in self.param_groups:
             beta1, beta2 = group["betas"]
