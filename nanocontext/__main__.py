@@ -58,7 +58,6 @@ def train(d, rho, height, device_batch_size, total_batch_size,
                                          weight_decay=weight_decay,
                                          warmup_ratio=warmup_ratio, warmdown_ratio=warmdown_ratio,
                                          final_lr_frac=final_lr)
-    bos_token = vocab_size - 1
     with ddp_context():
         rng = np.random.default_rng(seed=[ddp_rank(), seed])
         device = device_to_use()
@@ -74,7 +73,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             num_iterations = target_tokens // total_batch_size
         dataloader = broadcast_tree_data_loader(d, rho, height,
                                                 device_batch_size, context_len, batch_height, vocab_size,
-                                                device=device, bos_token=bos_token, seed=rng)
+                                                device=device, seed=rng)
         trainer = NanochatTrainer(trainer_conf, model, dataloader)
         trainer.train(num_iterations, grad_accum_steps)
         save_model(model.state_dict(), save_to)

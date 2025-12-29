@@ -173,16 +173,14 @@ def tokenized_broadcast_trees(d, rho, height, batch_height, max_vocab_size=32, s
 
 
 def broadcast_tree_data_loader(d, rho, height, batch_size, seq_len, batch_height, max_vocab_size=32,
-                               bos_token=None, device="cpu", seed=None):
+                               device="cpu", seed=None):
     token_buffer = deque()
     needed_tokens = batch_size * seq_len + 1
     rng = np.random.default_rng(seed)
     trees = tokenized_broadcast_trees(d, rho, height, batch_height, max_vocab_size, rng)
     while True:
         while len(token_buffer) < needed_tokens:
-            if bos_token is not None:
-                token_buffer.append(bos_token)
-                token_buffer.extend(next(trees))
+            token_buffer.extend(next(trees))
         tokens = [token_buffer.popleft() for _ in range(needed_tokens)]
         use_cuda_opt = device == "cuda"
         scratch = torch.tensor(tokens, dtype=torch.long, pin_memory=use_cuda_opt)

@@ -66,7 +66,7 @@ class Nanochat(nn.Module):
     def _precompute_rotary_embd(self, seq_len, head_dim, base=10000, device=None):
         if device is None:
             device = self.transformer.wte.weight.device
-        channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)
+        channel_range = torch.arange(0, head_dim - 1, 2, dtype=torch.float32, device=device)
         inv_freq = 1.0 / (base ** (channel_range / head_dim))
         t = torch.arange(seq_len, dtype=torch.float32, device=device)
         freq = torch.outer(t, inv_freq)

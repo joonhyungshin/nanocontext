@@ -47,7 +47,7 @@ class CausalSelfAttention(nn.Module):
         self.w_q = nn.Linear(n_embd, n_heads * self.head_dim, bias=False)
         self.w_k = nn.Linear(n_embd, n_kv_heads * self.head_dim, bias=False)
         self.w_v = nn.Linear(n_embd, n_kv_heads * self.head_dim, bias=False)
-        self.proj = nn.Linear(n_embd, n_embd, bias=False)
+        self.proj = nn.Linear(n_heads * self.head_dim, n_embd, bias=False)
 
     def forward(self, x, cos_sin, kv_cache):
         B, T, C = x.size()
