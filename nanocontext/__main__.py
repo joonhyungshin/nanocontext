@@ -4,9 +4,9 @@ import numpy as np
 import torch
 
 from nanocontext.data.broadcast_tree import broadcast_tree_data_loader, decode_trees
-from nanocontext.data.simple import zero_one_data_loader
 from nanocontext.models.nanochat import NanochatConfig, Nanochat
 from nanocontext.train import NanochatTrainerConfig, NanochatTrainer
+from nanocontext.sample import NanochatSampler
 from nanocontext.utils import ddp_context, ddp_rank, ddp_world_size, device_to_use, echo, save_model, load_model
 
 
@@ -89,10 +89,11 @@ def train(d, rho, height, device_batch_size, total_batch_size,
 @click.option("--max-tokens", help="maximum number of tokens", type=int, required=True)
 @click.option("--temperature", help="sampling temperature", default=1.0, type=float)
 @click.option("--top-k", help="top-k sampling", type=int)
+@click.option("--samples", help="number of samples to generate", default=1, type=int)
 @click.option("--model-path", help="path to model", type=str, required=True)
 @click.option("--seed", help="random seed", default=42, type=int)
 def generate(context_len, vocab_size, layers, heads, kv_heads, model_dim,
-             max_tokens, temperature, top_k,
+             max_tokens, temperature, top_k, samples,
              model_path, seed):
     heads, kv_heads, model_dim = model_hyperparams_from_layers(layers, heads, kv_heads, model_dim)
     model_conf = NanochatConfig(sequence_len=context_len, vocab_size=vocab_size,
@@ -104,12 +105,17 @@ def generate(context_len, vocab_size, layers, heads, kv_heads, model_dim,
     model.init_weights()
     model_data = load_model(model_path)
     model.load_state_dict(model_data, strict=True, assign=True)
-    generated_tokens = [0]
     model.eval()
-    for token in model.generate(generated_tokens, max_tokens, temperature, top_k, seed):
-        generated_tokens.append(token)
-    for tree in decode_trees(generated_tokens):
-        tree.print_tree()
+    sampler = NanochatSampler(model, seed=seed)
+    generated_tokens = [[0] for _ in range(samples)]
+    for tokens in sampler.generate([0], num_samples=samples,
+                                  max_tokens=max_tokens, end_token=0, temperature=temperature, top_k=top_k):
+        for i in range(samples):
+            if tokens[i] != 0:
+                generated_tokens[i].append(tokens[i])
+    for i in range(samples):
+        for tree in decode_trees(generated_tokens[i]):
+            tree.print_tree()
 
 
 def model_hyperparams_from_layers(n_layers, n_heads=None, n_kv_heads=None, n_embd=None):

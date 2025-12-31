@@ -75,7 +75,7 @@ class Nanochat(nn.Module):
         cos, sin = cos[None, :, None, :], sin[None, :, None, :]
         return cos, sin
 
-    def forward(self, x, targets=None, kv_cache=None, loss_reduction="mean"):
+    def forward(self, x, kv_cache=None):
         B, T = x.size()
 
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
@@ -91,13 +91,7 @@ class Nanochat(nn.Module):
         logits = self.lm_head(x)
         logits = logits.float()
         logits = softcap * torch.tanh(logits / softcap)
-
-        if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
-                                   ignore_index=-1, reduction=loss_reduction)
-            return loss
-        else:
-            return logits
+        return logits
 
     @property
     def device(self):
@@ -112,8 +106,7 @@ class Nanochat(nn.Module):
                 rng.manual_seed(seed)
         x = torch.tensor([tokens], dtype=torch.long, device=self.device)
         for _ in range(max_tokens):
-            with autocast():
-                logits = self.forward(x)
+            logits = self.forward(x)
             logits = logits[:, -1, :]
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))

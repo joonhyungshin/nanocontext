@@ -35,6 +35,12 @@ class KVCache:
             self.pos = t1
         return k_view, v_view
 
+    def copy_from(self, other):
+        dtype, device = other.kv_cache.dtype, other.kv_cache.device
+        self.kv_cache = torch.empty(self.kv_shape, dtype=dtype, device=device)
+        self.kv_cache[:, :, :, :, :other.pos, :] = other.kv_cache
+        self.pos = other.pos
+
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, layer_idx, n_heads, n_kv_heads, n_embd):

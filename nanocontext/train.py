@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 from torch.optim import AdamW
 
 from nanocontext.optim import DistAdamW, Muon, DistMuon
@@ -34,7 +35,7 @@ class NanochatTrainer:
         self.dataloader = dataloader
         self.optimizers = self.get_optimizers()
 
-    def train(self, num_iterations, grad_accum_steps):
+    def train(self, num_iterations, grad_accum_steps, loss_reduction="mean"):
         step = 0
         train_loss = 0
         x, y = next(self.dataloader)
@@ -44,7 +45,9 @@ class NanochatTrainer:
                 break
             for micro_step in range(grad_accum_steps):
                 with autocast():
-                    loss = self.compiled_model(x, y)
+                    logits = self.compiled_model(x)
+                    loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1),
+                                           ignore_index=-1, reduction=loss_reduction)
                 train_loss = loss.detach()
                 loss = loss / grad_accum_steps
                 loss.backward()
