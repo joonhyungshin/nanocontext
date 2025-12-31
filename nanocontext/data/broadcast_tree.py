@@ -3,7 +3,9 @@ from collections import deque
 import numpy as np
 import torch
 
-from nanocontext.utils import d_order
+from nanocontext.utils import d_order, uniform_slices_from_concatenation
+
+from . import tokens_to_data
 
 
 class BroadcastTree:
@@ -174,21 +176,11 @@ def tokenized_broadcast_trees(d, rho, height, batch_height, max_vocab_size=32, s
 
 def broadcast_tree_data_loader(d, rho, height, batch_size, seq_len, batch_height, max_vocab_size=32,
                                device="cpu", seed=None):
-    token_buffer = deque()
     needed_tokens = batch_size * seq_len + 1
     rng = np.random.default_rng(seed)
     trees = tokenized_broadcast_trees(d, rho, height, batch_height, max_vocab_size, rng)
-    while True:
-        while len(token_buffer) < needed_tokens:
-            token_buffer.extend(next(trees))
-        tokens = [token_buffer.popleft() for _ in range(needed_tokens)]
-        use_cuda_opt = device == "cuda"
-        scratch = torch.tensor(tokens, dtype=torch.long, pin_memory=use_cuda_opt)
-        inputs_cpu = scratch[:-1]
-        targets_cpu = scratch[1:]
-        inputs = inputs_cpu.view(batch_size, seq_len).to(device=device, non_blocking=use_cuda_opt)
-        targets = targets_cpu.view(batch_size, seq_len).to(device=device, non_blocking=use_cuda_opt)
-        yield inputs, targets
+    for tokens in uniform_slices_from_concatenation(trees, needed_tokens):
+        yield tokens_to_data(tokens, batch_size, seq_len, device)
 
 
 def decode_trees(tokens, rho=None, seed=None):

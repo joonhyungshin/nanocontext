@@ -4,6 +4,7 @@ import numpy as np
 import torch
 
 from nanocontext.data.broadcast_tree import broadcast_tree_data_loader, decode_trees
+from nanocontext.data.simple import zero_one_data_loader
 from nanocontext.models.nanochat import NanochatConfig, Nanochat
 from nanocontext.train import NanochatTrainerConfig, NanochatTrainer
 from nanocontext.utils import ddp_context, ddp_rank, ddp_world_size, device_to_use, echo, save_model, load_model
@@ -47,10 +48,9 @@ def train(d, rho, height, device_batch_size, total_batch_size,
           buffer_size, seed):
     batch_height = 0
     buffer_len = 1
-    while buffer_len * d <= buffer_size:
+    while buffer_len * d <= buffer_size and batch_height < height:
         batch_height += 1
         buffer_len *= d
-    batch_height = min(batch_height, height)
     heads, kv_heads, model_dim = model_hyperparams_from_layers(layers, heads, kv_heads, model_dim)
     model_conf = NanochatConfig(sequence_len=context_len, vocab_size=vocab_size,
                                 n_layers=layers, n_heads=heads, n_kv_heads=kv_heads, n_embd=model_dim)
@@ -101,10 +101,12 @@ def generate(context_len, vocab_size, layers, heads, kv_heads, model_dim,
         model = Nanochat(model_conf)
     device = device_to_use()
     model.to_empty(device=device)
+    model.init_weights()
     model_data = load_model(model_path)
     model.load_state_dict(model_data, strict=True, assign=True)
     generated_tokens = [0]
-    for token in model.generate([0], max_tokens, temperature, top_k, seed):
+    model.eval()
+    for token in model.generate(generated_tokens, max_tokens, temperature, top_k, seed):
         generated_tokens.append(token)
     for tree in decode_trees(generated_tokens):
         tree.print_tree()
