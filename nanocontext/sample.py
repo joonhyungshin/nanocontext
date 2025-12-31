@@ -8,9 +8,12 @@ from .utils import autocast
 class NanochatSampler:
     def __init__(self, model, seed=None):
         self.model = model
-        self.rng = torch.Generator(model.device)
-        if seed is not None:
-            self.rng.manual_seed(seed)
+        if isinstance(seed, torch.Generator):
+            self.rng = seed
+        else:
+            self.rng = torch.Generator(model.device)
+            if seed is not None:
+                self.rng.manual_seed(seed)
 
     @property
     def device(self):

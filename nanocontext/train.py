@@ -2,6 +2,7 @@
 Adapted from nanochat.
 """
 from dataclasses import dataclass
+import math
 
 import torch
 import torch.distributed as dist
@@ -28,12 +29,18 @@ class NanochatTrainerConfig:
 
 
 class NanochatTrainer:
-    def __init__(self, config, model, dataloader):
+    def __init__(self, config, model, dataloader, seed=None):
         self.config = config
         self.model = model
         self.compiled_model = torch.compile(model, dynamic=False)
         self.dataloader = dataloader
         self.optimizers = self.get_optimizers()
+        if isinstance(seed, torch.Generator):
+            self.rng = seed
+        else:
+            self.rng = torch.Generator(device=model.device)
+            if seed is not None:
+                self.rng.manual_seed(seed)
 
     def train(self, num_iterations, grad_accum_steps, loss_reduction="mean"):
         step = 0
@@ -109,3 +116,22 @@ class NanochatTrainer:
         frac = min(step / 300, 1)
         momentum = (1 - frac) * 0.85 + frac * 0.95
         return momentum
+
+    def init_weights(self):
+        self.model.apply(self._init_weights)
+        torch.nn.init.zeros_(self.model.lm_head.weight)
+        for block in self.model.transformer.h:
+            torch.nn.init.zeros_(block.mlp.proj.weight)
+            torch.nn.init.zeros_(block.attn.proj.weight)
+        self.model.preprocess()
+
+    def _init_weights(self, module):
+        if isinstance(module, torch.nn.Linear):
+            fan_out = module.weight.size(0)
+            fan_in = module.weight.size(1)
+            std = 1.0 / math.sqrt(fan_in) * min(1.0, math.sqrt(fan_out / fan_in))
+            torch.nn.init.normal_(module.weight, mean=0.0, std=std, generator=self.rng)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, torch.nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=1.0, generator=self.rng)

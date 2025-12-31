@@ -3,6 +3,8 @@ from contextlib import contextmanager, nullcontext
 import functools
 import os
 
+import numpy as np
+
 import click
 
 import torch
@@ -129,3 +131,8 @@ def uniform_slices_from_concatenation(generator, size):
             token_buffer.extend(next(generator))
         tokens = [token_buffer.popleft() for _ in range(size)]
         yield tokens
+
+
+def get_seeds(seed=None):
+    sq = np.random.SeedSequence(seed)
+    return sq.entropy, sq.spawn(1)[0].generate_state(1)[0].item()

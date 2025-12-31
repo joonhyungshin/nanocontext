@@ -13,6 +13,7 @@ python = "3.13.*"
 [pypi-dependencies]
 numpy = ">=2.4.0,<3"
 click = ">=8.3.1,<9"
+wandb = ">=0.23.1,<0.24"
 
 [feature.cuda]
 platforms = ["linux-64"]

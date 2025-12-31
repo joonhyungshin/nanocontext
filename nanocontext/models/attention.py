@@ -55,14 +55,14 @@ class CausalSelfAttention(nn.Module):
         self.w_v = nn.Linear(n_embd, n_kv_heads * self.head_dim, bias=False)
         self.proj = nn.Linear(n_heads * self.head_dim, n_embd, bias=False)
 
-    def forward(self, x, cos_sin, kv_cache):
+    def forward(self, x, rotation, kv_cache):
         B, T, C = x.size()
 
         q = self.w_q(x).view(B, T, self.n_heads, self.head_dim)
         k = self.w_k(x).view(B, T, self.n_kv_heads, self.head_dim)
         v = self.w_v(x).view(B, T, self.n_kv_heads, self.head_dim)
 
-        cos, sin = cos_sin
+        cos, sin = rotation
         q, k = rotary_emb_attn(q, cos, sin), rotary_emb_attn(k, cos, sin)
         q, k = rms_norm(q), rms_norm(k)
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)

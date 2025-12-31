@@ -1,0 +1,5 @@
+[default]
+entity = koehler-lab
+project = test
+base_url = https://api.wandb.ai
+

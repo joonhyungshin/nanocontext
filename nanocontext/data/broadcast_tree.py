@@ -1,7 +1,4 @@
-from collections import deque
-
 import numpy as np
-import torch
 
 from nanocontext.utils import d_order, uniform_slices_from_concatenation
 

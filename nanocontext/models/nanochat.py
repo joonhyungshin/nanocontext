@@ -20,6 +20,7 @@ class NanochatConfig:
     n_heads: int = 6
     n_kv_heads: int = 6
     n_embd: int = 768
+    rotary_embd_base: int = 10000
 
 
 class MLP(nn.Module):
@@ -41,8 +42,8 @@ class Block(nn.Module):
         self.attn = CausalSelfAttention(layer_idx, n_heads, n_kv_heads, n_embd)
         self.mlp = MLP(n_embd)
 
-    def forward(self, x, cos_sin, kv_cache):
-        x = x + self.attn(rms_norm(x), cos_sin, kv_cache)
+    def forward(self, x, rotation, kv_cache):
+        x = x + self.attn(rms_norm(x), rotation, kv_cache)
         x = x + self.mlp(rms_norm(x))
         return x
 
@@ -59,32 +60,39 @@ class Nanochat(nn.Module):
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.rotary_seq_len = config.sequence_len * 10
         head_dim = config.n_embd // config.n_heads
-        cos, sin = self._precompute_rotary_embd(self.rotary_seq_len, head_dim)
-        self.register_buffer("cos", cos, persistent=False)
-        self.register_buffer("sin", sin, persistent=False)
+        rotary_emb_shape = (1, self.rotary_seq_len, 1, head_dim // 2)
+        self.register_buffer("rotary_embd_cos",
+                             torch.empty(rotary_emb_shape, dtype=torch.bfloat16), persistent=False)
+        self.register_buffer("rotary_embd_sin",
+                             torch.empty(rotary_emb_shape, dtype=torch.bfloat16), persistent=False)
+        self._precompute_rotary_embd()
 
-    def _precompute_rotary_embd(self, seq_len, head_dim, base=10000, device=None):
-        if device is None:
-            device = self.transformer.wte.weight.device
+    def _precompute_rotary_embd(self):
+        device = self.transformer.wte.weight.device
+        head_dim = self.config.n_embd // self.config.n_heads
         channel_range = torch.arange(0, head_dim - 1, 2, dtype=torch.float32, device=device)
-        inv_freq = 1.0 / (base ** (channel_range / head_dim))
-        t = torch.arange(seq_len, dtype=torch.float32, device=device)
+        inv_freq = 1.0 / (self.config.rotary_embd_base ** (channel_range / head_dim))
+        t = torch.arange(self.rotary_seq_len, dtype=torch.float32, device=device)
         freq = torch.outer(t, inv_freq)
         cos, sin = freq.cos(), freq.sin()
         cos, sin = cos.bfloat16(), sin.bfloat16()
-        cos, sin = cos[None, :, None, :], sin[None, :, None, :]
-        return cos, sin
+        self.rotary_embd_cos, self.rotary_embd_sin = cos[None, :, None, :], sin[None, :, None, :]
+
+    def preprocess(self):
+        self._precompute_rotary_embd()
+        if self.transformer.wte.weight.device.type == "cuda":
+            self.transformer.wte.to(dtype=torch.bfloat16)
 
     def forward(self, x, kv_cache=None):
         B, T = x.size()
 
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
-        cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T]
+        rotation = self.rotary_embd_cos[:, T0:T0+T], self.rotary_embd_sin[:, T0:T0+T]
 
         x = self.transformer.wte(x)
         x = rms_norm(x)
         for block in self.transformer.h:
-            x = block(x, cos_sin, kv_cache)
+            x = block(x, rotation, kv_cache)
         x = rms_norm(x)
 
         softcap = 15
@@ -120,27 +128,3 @@ class Nanochat(nn.Module):
             x = torch.cat([x, next_x], dim=-1)
             token = next_x.item()
             yield token
-
-    def init_weights(self):
-        self.apply(self._init_weights)
-        torch.nn.init.zeros_(self.lm_head.weight)
-        for block in self.transformer.h:
-            torch.nn.init.zeros_(block.mlp.proj.weight)
-            torch.nn.init.zeros_(block.attn.proj.weight)
-        head_dim = self.config.n_embd // self.config.n_heads
-        cos, sin = self._precompute_rotary_embd(self.rotary_seq_len, head_dim)
-        self.cos, self.sin = cos, sin
-        if self.transformer.wte.weight.device.type == "cuda":
-            self.transformer.wte.to(dtype=torch.bfloat16)
-
-    @staticmethod
-    def _init_weights(module):
-        if isinstance(module, nn.Linear):
-            fan_out = module.weight.size(0)
-            fan_in = module.weight.size(1)
-            std = 1.0 / math.sqrt(fan_in) * min(1.0, math.sqrt(fan_out / fan_in))
-            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=1.0)
