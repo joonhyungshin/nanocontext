@@ -1,15 +1,16 @@
+from functools import partial
+
 import click
 
 import numpy as np
 import torch
-import secrets
 
 from nanocontext.data.broadcast_tree import broadcast_tree_data_loader, decode_trees
 from nanocontext.models.nanochat import NanochatConfig, Nanochat
-from nanocontext.train import NanochatTrainerConfig, NanochatTrainer
+from nanocontext.train import NanochatTrainerConfig, NanochatTrainer, TrainerSignal
 from nanocontext.sample import NanochatSampler
 from nanocontext.utils import (ddp_context, ddp_rank, ddp_world_size, device_to_use,
-                               echo, save_model, load_model, get_seeds)
+                               main_process, save_model, load_model, get_seeds)
 
 import wandb
 
@@ -42,6 +43,7 @@ def cli():
 @click.option("--param-data-ratio", help="parameter:data ratio", default=20, type=int)
 @click.option("--save-to", help="path to save model", type=str, required=True)
 @click.option("--buffer-size", help="buffer size to stream a tree", default=1024, type=int)
+@click.option("--sample-every", help="sample a tree every few steps", type=int)
 @click.option("--seed", help="random seed", type=int)
 def train(d, rho, height, device_batch_size, total_batch_size,
           context_len, vocab_size, layers, heads, kv_heads, model_dim,
@@ -49,7 +51,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
           warmup_ratio, warmdown_ratio, final_lr,
           num_iterations, param_data_ratio,
           save_to,
-          buffer_size, seed):
+          buffer_size, sample_every, seed):
     seed, torch_seed = get_seeds(seed)
     echo(f"training with seed: {seed}")
     batch_height = 0
@@ -74,6 +76,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
         with torch.device("meta"):
             model = Nanochat(model_conf)
         model.to_empty(device=device)
+        torch_rng = torch.Generator(device=device)
         if not num_iterations:
             num_params = sum(p.numel() for p in model.parameters())
             target_tokens = param_data_ratio * num_params
@@ -81,10 +84,25 @@ def train(d, rho, height, device_batch_size, total_batch_size,
         dataloader = broadcast_tree_data_loader(d, rho, height,
                                                 device_batch_size, context_len, batch_height, vocab_size,
                                                 device=device, seed=rng)
-        trainer = NanochatTrainer(trainer_conf, model, dataloader, seed=torch_seed)
-        trainer.init_weights()
-        trainer.train(num_iterations, grad_accum_steps)
-        save_model(model.state_dict(), save_to)
+        wandb_conf = model_kwargs | trainer_kwargs | {
+            "d": d,
+            "rho": rho,
+            "height": height,
+            "device_batch_size": device_batch_size,
+            "total_batch_size": total_batch_size,
+            "seed": seed,
+        }
+        with wandb.init(config=wandb_conf) as run:
+            trainer = NanochatTrainer(trainer_conf, model, dataloader, seed=torch_rng)
+            trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
+                                      partial(sample_validate,sample_every, seed=torch_rng),
+                                      "sample_validate")
+            trainer.init_weights()
+            trainer.register_callback(TrainerSignal.POST_OPTIM_STEP,
+                                      partial(log_trainer_stats, run=run),
+                                      "log_trainer_stats")
+            trainer.train(num_iterations, grad_accum_steps)
+            save_model(model.state_dict(), save_to)
 
 
 @cli.command()
@@ -127,7 +145,7 @@ def generate(context_len, vocab_size, layers, heads, kv_heads, model_dim,
                 generated_tokens[i].append(tokens[i])
     for i in range(samples):
         for tree in decode_trees(generated_tokens[i]):
-            tree.print_tree()
+            echo(tree)
 
 
 def model_hyperparams_from_layers(n_layers, n_heads=None, n_kv_heads=None, n_embd=None):
@@ -138,6 +156,42 @@ def model_hyperparams_from_layers(n_layers, n_heads=None, n_kv_heads=None, n_emb
     if not n_kv_heads:
         n_kv_heads = n_heads
     return n_heads, n_kv_heads, n_embd
+
+
+echo = main_process(click.echo)
+
+
+@main_process
+def sample_validate(sample_every, step, num_iterations, model, seed):
+    if sample_every is not None and (step % sample_every == 1 or step == num_iterations):
+        model.eval()
+        sampler = NanochatSampler(model, seed=seed)
+        tokens = [0]
+        for token in sampler.generate([0], max_tokens=16, end_token=0):
+            tokens.append(token[0])
+        if tokens[-1] == 0:
+            tokens = tokens[:-1]
+        if len(tokens) <= 1:
+            echo("(empty)")
+        else:
+            echo(decode_trees(tokens)[0])
+        model.train()
+
+
+def log_trainer_stats(run, step, num_iterations, stats):
+    train_loss = stats["train_loss"]
+    ema_beta = 0.9
+    smooth_train_loss = ema_beta * stats.get("smooth_train_loss", 0) + (1 - ema_beta) * train_loss
+    stats["smooth_train_loss"] = smooth_train_loss
+    debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1))
+    log_data = {
+        "train_loss": debiased_smooth_loss,
+        "train_lrm": stats["lrm"]
+    }
+    if "grad_norm" in stats:
+        log_data["train_grad_norm"] = stats["grad_norm"]
+    run.log(log_data, step=step)
+    echo(f"Step {step}/{num_iterations} done with loss {train_loss}")
 
 
 cli()

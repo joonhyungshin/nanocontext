@@ -2,7 +2,7 @@ import numpy as np
 
 from nanocontext.utils import d_order, uniform_slices_from_concatenation
 
-from . import tokens_to_data
+from .common import tokens_to_data
 
 
 class BroadcastTree:
@@ -51,11 +51,10 @@ class BroadcastTree:
             canvas_idx += 1
         return canvas_idx
 
-    def print_tree(self):
+    def __str__(self):
         canvas = [""]
         self._draw_node(self.root, canvas, 0, 0)
-        for line in canvas:
-            print(line)
+        return "\n".join(canvas)
 
 
 class RegularBroadcastTree:
@@ -98,7 +97,7 @@ class RegularBroadcastTree:
         seq.reverse()
         return seq
 
-    def print_tree(self):
+    def __str__(self):
         if not self.sampled:
             return
         msg = ""
@@ -106,7 +105,7 @@ class RegularBroadcastTree:
             msg += (" " * (self.d ** (self.height - i) - 1)).join([("+" if node > 0 else "-")
                                                                    for node in layer])
             msg += "\n"
-        print(msg)
+        return msg
 
 
 class BroadcastTreeTokenizer:

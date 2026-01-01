@@ -5,8 +5,6 @@ import os
 
 import numpy as np
 
-import click
-
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
@@ -100,11 +98,6 @@ def d_order(n, d):
         cnt += 1
         n //= d
     return cnt
-
-
-@main_process
-def echo(*args, **kwargs):
-    click.echo(*args, **kwargs)
 
 
 def autocast():

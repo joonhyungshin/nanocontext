@@ -2,6 +2,7 @@
 Adapted from nanochat.
 """
 from dataclasses import dataclass
+from enum import Enum
 import math
 
 import torch
@@ -10,7 +11,7 @@ import torch.nn.functional as F
 from torch.optim import AdamW
 
 from nanocontext.optim import DistAdamW, Muon, DistMuon
-from nanocontext.utils import autocast, echo
+from nanocontext.utils import autocast
 
 
 @dataclass
@@ -20,12 +21,17 @@ class NanochatTrainerConfig:
     embedding_lr: float = 0.2
     matrix_lr: float = 0.02
     weight_decay: float = 0.0
-    # grad_clip: float = 1.0
+    grad_clip: float = 1.0
 
     # LR scheduler config
     warmup_ratio: float = 0.0
     warmdown_ratio: float = 0.2
     final_lr_frac: float = 0.0
+
+
+class TrainerSignal(Enum):
+    PRE_OPTIM_STEP = 1
+    POST_OPTIM_STEP = 2
 
 
 class NanochatTrainer:
@@ -35,6 +41,8 @@ class NanochatTrainer:
         self.compiled_model = torch.compile(model, dynamic=False)
         self.dataloader = dataloader
         self.optimizers = self.get_optimizers()
+        self.ctx = {}
+        self.callback_registry = {}
         if isinstance(seed, torch.Generator):
             self.rng = seed
         else:
@@ -42,12 +50,34 @@ class NanochatTrainer:
             if seed is not None:
                 self.rng.manual_seed(seed)
 
+    def register_callback(self, signal, callback, name=None):
+        if name is None:
+            if not hasattr(callback, "__name__"):
+                raise ValueError("no callback name provided")
+            name = callback.__name__
+        registry = self.callback_registry.setdefault(signal, {})
+        if name in registry:
+            raise ValueError(f"callback {name} already registered")
+        registry[name] = callback
+
+    def unregister_callback(self, signal, name):
+        if name in self.callback_registry.get(signal, {}):
+            del self.callback_registry[signal][name]
+            return True
+        return False
+
+    def fire(self, signal, **payload):
+        for name, callback in self.callback_registry.get(signal, {}).items():
+            callback(**payload)
+
     def train(self, num_iterations, grad_accum_steps, loss_reduction="mean"):
         step = 0
         train_loss = 0
         x, y = next(self.dataloader)
+        stats = {}
         while True:
             last_step = step == num_iterations
+            self.fire(TrainerSignal.PRE_OPTIM_STEP, step=step, num_iterations=num_iterations, model=self.model)
             if last_step:
                 break
             for micro_step in range(grad_accum_steps):
@@ -59,9 +89,10 @@ class NanochatTrainer:
                 loss = loss / grad_accum_steps
                 loss.backward()
                 x, y = next(self.dataloader)
-            # if self.config.grad_clip > 0.0:
-            #     grad_norm_tensor = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
-            #     grad_norm = grad_norm_tensor.item()
+            if self.config.grad_clip > 0.0:
+                grad_norm_tensor = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
+                grad_norm = grad_norm_tensor.item()
+                stats["grad_norm"] = grad_norm
             lrm = self.get_lr_multiplier(step, num_iterations)
             muon_momentum = self.get_muon_momentum(step)
             for opt in self.optimizers:
@@ -73,8 +104,12 @@ class NanochatTrainer:
             for opt in self.optimizers:
                 opt.step()
             self.compiled_model.zero_grad(set_to_none=True)
+            stats.update({
+                "train_loss": train_loss.item(),
+                "lrm": lrm,
+            })
+            self.fire(TrainerSignal.POST_OPTIM_STEP, step=step, num_iterations=num_iterations, stats=stats)
             step += 1
-            echo(f"Step {step} done with loss {train_loss.item()}")
 
     def get_optimizers(self):
         model_dim = self.model.config.n_embd

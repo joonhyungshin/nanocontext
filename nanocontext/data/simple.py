@@ -1,6 +1,6 @@
 import numpy as np
 
-from . import tokens_to_data
+from .common import tokens_to_data
 
 
 def zero_one_data_loader(batch_size, seq_len, device="cpu", period=2, seed=None):

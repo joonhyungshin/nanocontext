@@ -2,12 +2,11 @@
 Adapted from nanochat.
 """
 from dataclasses import dataclass
-import math
 
 import torch
 import torch.nn.functional as F
 from torch import nn
-from nanocontext.utils import rms_norm, autocast
+from nanocontext.utils import rms_norm
 
 from .attention import CausalSelfAttention
 
