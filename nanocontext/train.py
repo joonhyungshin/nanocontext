@@ -50,24 +50,11 @@ class NanochatTrainer:
             if seed is not None:
                 self.rng.manual_seed(seed)
 
-    def register_callback(self, signal, callback, name=None):
-        if name is None:
-            if not hasattr(callback, "__name__"):
-                raise ValueError("no callback name provided")
-            name = callback.__name__
-        registry = self.callback_registry.setdefault(signal, {})
-        if name in registry:
-            raise ValueError(f"callback {name} already registered")
-        registry[name] = callback
-
-    def unregister_callback(self, signal, name):
-        if name in self.callback_registry.get(signal, {}):
-            del self.callback_registry[signal][name]
-            return True
-        return False
+    def register_callback(self, signal, callback):
+        self.callback_registry.setdefault(signal, []).append(callback)
 
     def fire(self, signal, **payload):
-        for name, callback in self.callback_registry.get(signal, {}).items():
+        for callback in self.callback_registry.get(signal, []):
             callback(**payload)
 
     def train(self, num_iterations, grad_accum_steps, loss_reduction="mean"):

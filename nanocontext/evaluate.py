@@ -12,7 +12,7 @@ def evaluate_var_sum(model, num_samples, max_tokens, seed=None):
     total_samples = num_samples * world_size
     sampler = NanochatSampler(model, seed=seed)
     tokens = sampler.generate_batch([0], num_samples=num_samples, max_tokens=max_tokens)
-    spin_sum = torch.zeros(total_samples, dtype=torch.int64, device=model.device)
+    spin_sum = torch.zeros(num_samples, dtype=torch.int64, device=model.device)
     mean_spin_sum = torch.tensor(0, dtype=torch.int64, device=model.device)
     for i, tree_tokens in enumerate(tokens):
         if len(tree_tokens) <= 1:

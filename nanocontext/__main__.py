@@ -110,17 +110,12 @@ def train(d, rho, height, device_batch_size, total_batch_size,
         with wandb.init(config=wandb_conf, mode=wandb_mode) as run:
             trainer = NanochatTrainer(trainer_conf, model, dataloader, seed=rng.global_torch_rng)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
-                                      partial(timer_start, ctx=ctx),
-                                      "timer_start")
+                                      partial(sample_validate,sample_every, seed=rng.local_torch_rng))
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
-                                      partial(sample_validate,sample_every, seed=rng.local_torch_rng),
-                                      "sample_validate")
-            trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
-                                      partial(evaluate,eval_every, run=run, ctx=ctx, seed=rng.local_torch_rng),
-                                      "evaluate")
+                                      partial(evaluate,eval_every, run=run, ctx=ctx, seed=rng.local_torch_rng))
+            trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP, partial(timer_start, ctx=ctx))
             trainer.register_callback(TrainerSignal.POST_OPTIM_STEP,
-                                      partial(log_trainer_stats, wandb_log_every, run=run, ctx=ctx),
-                                      "log_trainer_stats")
+                                      partial(log_trainer_stats, wandb_log_every, run=run, ctx=ctx))
             trainer.init_weights()
             trainer.train(num_iterations, grad_accum_steps)
             echo("Training finished")
@@ -183,8 +178,8 @@ echo = main_process(click.echo)
 def evaluate(evaluate_every, step, num_iterations, model, run, ctx, seed):
     if evaluate_every is not None and (step % evaluate_every == 0 or step == num_iterations):
         d, height, num_samples = ctx["d"], ctx["eval_height"], ctx["eval_samples"]
-        max_tokens = 1
-        for _ in range(height):
+        max_tokens = d
+        for _ in range(height - 1):
             max_tokens = d * max_tokens + d - 1
         model.eval()
         sample_var = evaluate_var_sum(model, num_samples, max_tokens, seed=seed)
