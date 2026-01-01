@@ -68,3 +68,14 @@ class NanochatSampler:
             x = torch.tensor(next_tokens, dtype=torch.long, device=self.device).unsqueeze(1)
             with autocast():
                 logits = self.model(x, kv_cache=kv_cache)[:, -1, :]
+
+    def generate_batch(self, tokens, num_samples=1, end_token=None, **kwargs):
+        results = [tokens.copy() for _ in range(num_samples)]
+        completed = [False] * num_samples
+        for next_tokens in self.generate(tokens, num_samples=num_samples, end_token=end_token, **kwargs):
+            for i, next_token in enumerate(next_tokens):
+                if end_token is not None and next_token == end_token:
+                    completed[i] = True
+                if not completed[i]:
+                    results[i].append(next_token)
+        return results

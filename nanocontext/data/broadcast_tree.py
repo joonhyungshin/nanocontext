@@ -29,10 +29,23 @@ class BroadcastTree:
                 created = True
             return self.parent, created
 
+        def traverse(self, func):
+            func(self)
+            for child in self.children:
+                child.traverse(func)
+
     def __init__(self, rho, seed=None):
         self.rho = rho
         self.rng = np.random.default_rng(seed)
         self.root = self.Node()
+
+    def get_leaves_values(self):
+        leaves = []
+        def add_to_leaves(node):
+            if not node.children and node.value is not None:
+                leaves.append(node.value)
+        self.root.traverse(add_to_leaves)
+        return leaves
 
     def _draw_node(self, node, canvas, canvas_idx, depth):
         canvas[depth] += " " * (canvas_idx - len(canvas[depth]))
@@ -124,7 +137,7 @@ class BroadcastTreeTokenizer:
 
 
 def dynamic_broadcast_tree(d, rho, height, batch_height, seed=None):
-    ancestors = []  # INORDER traversal of tree
+    ancestors = []
     leaf_idx = 0
     batch_height = min(height, batch_height)
     batch_len = d**batch_height
