@@ -34,6 +34,7 @@ class TrainerSignal(Enum):
     POST_OPTIM_STEP = 2
 
 
+# TODO: make it stateful?
 class NanochatTrainer:
     def __init__(self, config, model, dataloader, seed=None):
         self.config = config
@@ -41,7 +42,6 @@ class NanochatTrainer:
         self.compiled_model = torch.compile(model, dynamic=False)
         self.dataloader = dataloader
         self.optimizers = self.get_optimizers()
-        self.ctx = {}
         self.callback_registry = {}
         if isinstance(seed, torch.Generator):
             self.rng = seed

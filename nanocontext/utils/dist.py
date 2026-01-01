@@ -1,13 +1,9 @@
-from collections import deque
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 import functools
 import os
 
-import numpy as np
-
 import torch
 import torch.distributed as dist
-import torch.nn.functional as F
 
 
 def ddp_local_rank():
@@ -45,12 +41,6 @@ def main_process(func=None, return_otherwise=None):
         return decorator
 
 
-def device_to_use():
-    if torch.cuda.is_available():
-        return torch.device("cuda", ddp_local_rank())
-    return torch.device("cpu")
-
-
 def ddp_setup():
     if dist.is_nccl_available() and torch.cuda.is_available():
         dist.init_process_group(backend="nccl", device_id=device_to_use())
@@ -79,53 +69,7 @@ def ddp_context():
             ddp_teardown()
 
 
-def rms_norm(x):
-    return F.rms_norm(x, (x.size(-1),))
-
-
-def rotary_emb_attn(x, cos, sin):
-    assert x.ndim == 4
-    d = x.shape[3] // 2
-    x1, x2 = x[..., :d], x[..., d:d + d]
-    y1 = x1 * cos + x2 * sin
-    y2 = x1 * (-sin) + x2 * cos
-    return torch.cat([y1, y2], dim=3)
-
-
-def d_order(n, d):
-    cnt = 0
-    while n % d == 0:
-        cnt += 1
-        n //= d
-    return cnt
-
-
-def autocast():
-    device_type = device_to_use().type
-    if device_type == "cuda":
-        return torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16)
-    return nullcontext()
-
-
-@main_process
-def save_model(model_data, model_path):
-    torch.save(model_data, model_path)
-
-
-def load_model(model_path):
-    model_data = torch.load(model_path, map_location=device_to_use())
-    return model_data
-
-
-def uniform_slices_from_concatenation(generator, size):
-    token_buffer = deque()
-    while True:
-        while len(token_buffer) < size:
-            token_buffer.extend(next(generator))
-        tokens = [token_buffer.popleft() for _ in range(size)]
-        yield tokens
-
-
-def get_seeds(seed=None):
-    sq = np.random.SeedSequence(seed)
-    return sq.entropy, sq.spawn(1)[0].generate_state(1)[0].item()
+def device_to_use():
+    if torch.cuda.is_available():
+        return torch.device("cuda", ddp_local_rank())
+    return torch.device("cpu")
