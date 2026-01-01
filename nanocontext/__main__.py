@@ -42,6 +42,7 @@ def cli():
 @click.option("--num-iterations", help="number of iterations", type=int)
 @click.option("--param-data-ratio", help="parameter:data ratio", default=20, type=int)
 @click.option("--save-to", help="path to save model", type=str, required=True)
+@click.option("--wandb-group", help="wandb group id", type=str)
 @click.option("--buffer-size", help="buffer size to stream a tree", default=1024, type=int)
 @click.option("--sample-every", help="sample a tree every few steps", type=int)
 @click.option("--seed", help="random seed", type=int)
@@ -50,7 +51,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
           unembedding_lr, embedding_lr, matrix_lr, weight_decay,
           warmup_ratio, warmdown_ratio, final_lr,
           num_iterations, param_data_ratio,
-          save_to,
+          save_to, wandb_group,
           buffer_size, sample_every, seed):
     seed, torch_seed = get_seeds(seed)
     echo(f"training with seed: {seed}")
@@ -92,7 +93,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             "total_batch_size": total_batch_size,
             "seed": seed,
         }
-        with wandb.init(config=wandb_conf) as run:
+        with wandb.init(config=wandb_conf, group=wandb_group) as run:
             trainer = NanochatTrainer(trainer_conf, model, dataloader, seed=torch_rng)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
                                       partial(sample_validate,sample_every, seed=torch_rng),
