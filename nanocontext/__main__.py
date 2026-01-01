@@ -182,7 +182,7 @@ echo = main_process(click.echo)
 
 def evaluate(evaluate_every, step, num_iterations, model, run, ctx, seed):
     if evaluate_every is not None and (step % evaluate_every == 0 or step == num_iterations):
-        d, height, num_samples = ctx["d"], ctx["eval_height"], ctx["num_samples"]
+        d, height, num_samples = ctx["d"], ctx["eval_height"], ctx["eval_samples"]
         max_tokens = 1
         for _ in range(height):
             max_tokens = d * max_tokens + d - 1
