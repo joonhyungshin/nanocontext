@@ -48,6 +48,7 @@ def cli():
 @click.option("--wandb-log-every", help="wandb log every n steps", default=10, type=int)
 @click.option("--buffer-size", help="buffer size to stream a tree", default=1024, type=int)
 @click.option("--sample-every", help="sample a tree every few steps", type=int)
+@click.option("--sample-max-tokens", help="sample max tokens", default=32, type=int)
 @click.option("--eval-every", help="evaluate every few steps", default=20, type=int)
 @click.option("--eval-height", help="height to use in evaluation", type=int)
 @click.option("--eval-samples", help="number of samples for evaluation", default=32, type=int)
@@ -59,7 +60,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
           num_iterations, param_data_ratio,
           save_to, wandb_mode, wandb_log_every,
           eval_every, eval_height, eval_samples,
-          buffer_size, sample_every, seed):
+          buffer_size, sample_every, sample_max_tokens, seed):
     rng = RNGManager(seed=seed)
     echo(f"training with seed: {rng.seed}")
     batch_height = 0
@@ -110,7 +111,8 @@ def train(d, rho, height, device_batch_size, total_batch_size,
         with wandb.init(config=wandb_conf, mode=wandb_mode) as run:
             trainer = NanochatTrainer(trainer_conf, model, dataloader, seed=rng.global_torch_rng)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
-                                      partial(sample_validate,sample_every, seed=rng.local_torch_rng))
+                                      partial(sample_validate,sample_every, sample_max_tokens,
+                                              seed=rng.local_torch_rng))
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
                                       partial(evaluate,eval_every, run=run, ctx=ctx, seed=rng.local_torch_rng))
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP, partial(timer_start, ctx=ctx))
@@ -191,11 +193,11 @@ def evaluate(evaluate_every, step, num_iterations, model, run, ctx, seed):
 
 
 @main_process
-def sample_validate(sample_every, step, num_iterations, model, seed):
+def sample_validate(sample_every, sample_max_tokens, step, num_iterations, model, seed):
     if sample_every is not None and (step % sample_every == 0 or step == num_iterations):
         model.eval()
         sampler = NanochatSampler(model, seed=seed)
-        tokens = sampler.generate_batch([0], max_tokens=16, end_token=0)[0]
+        tokens = sampler.generate_batch([0], max_tokens=sample_max_tokens, end_token=0)[0]
         if len(tokens) <= 1:
             echo("(empty)")
         else:
