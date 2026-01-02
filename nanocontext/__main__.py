@@ -100,7 +100,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             "total_batch_size": total_batch_size,
             "eval_height": eval_height,
             "eval_samples": eval_samples,
-            "seed": seed,
+            "seed": rng.seed,
         }
         ctx = wandb_conf | {
             "total_training_time": 0,
