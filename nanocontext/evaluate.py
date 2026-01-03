@@ -32,5 +32,6 @@ def evaluate_moments(model, num_samples, max_tokens, seed=None):
     biased_var = spin_var / n
     biased_fourth = spin_fourth / n
     unbiased_var = spin_var / (n - 1)
-    unbiased_fourth = n ** 2 / ((n - 2) * (n - 3)) * ((n + 1) / (n - 1) * biased_fourth - 3 * biased_var ** 2)
-    return unbiased_var.item(), unbiased_fourth.item()
+    sample_kurtosis = biased_fourth / biased_var ** 2 - 3
+    fisher_kurtosis = (n - 1) / ((n - 2) * (n - 3)) * ((n + 1) * sample_kurtosis + 6)
+    return unbiased_var.item(), fisher_kurtosis.item()

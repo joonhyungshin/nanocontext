@@ -184,12 +184,12 @@ def evaluate(evaluate_every, step, num_iterations, model, run, ctx, seed):
         for _ in range(height - 1):
             max_tokens = d * max_tokens + d - 1
         model.eval()
-        sample_var, sample_fourth = evaluate_moments(model, num_samples, max_tokens, seed=seed)
+        sample_var, kurtosis = evaluate_moments(model, num_samples, max_tokens, seed=seed)
         model.train()
         echo(f"Sample variance of magnetization for height {height}: {sample_var:.6f}")
         run.log({
             "sample_variance": sample_var,
-            "sample_fourth": sample_fourth,
+            "sample_kurtosis": kurtosis,
         }, step=step)
 
 
