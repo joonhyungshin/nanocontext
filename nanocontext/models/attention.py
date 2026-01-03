@@ -35,7 +35,7 @@ class KVCache:
             self.pos = t1
         return k_view, v_view
 
-    def copy_from(self, other):
+    def prefill(self, other):
         dtype, device = other.kv_cache.dtype, other.kv_cache.device
         self.kv_cache = torch.empty(self.kv_shape, dtype=dtype, device=device)
         self.kv_cache[:, :, :, :, :other.pos, :] = other.kv_cache

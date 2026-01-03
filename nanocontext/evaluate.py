@@ -7,9 +7,10 @@ from .utils import ddp_world_size
 
 
 @torch.inference_mode()
-def evaluate_var_sum(model, num_samples, max_tokens, seed=None):
+def evaluate_moments(model, num_samples, max_tokens, seed=None):
+    """Computes h-estimators for second and fourth moments."""
     world_size = ddp_world_size()
-    total_samples = num_samples * world_size
+    n = num_samples * world_size
     sampler = NanochatSampler(model, seed=seed)
     tokens = sampler.generate_batch([0], num_samples=num_samples, max_tokens=max_tokens)
     spin_sum = torch.zeros(num_samples, dtype=torch.int64, device=model.device)
@@ -22,9 +23,14 @@ def evaluate_var_sum(model, num_samples, max_tokens, seed=None):
         mean_spin_sum += spin_sum[i]
     if world_size > 1:
         dist.all_reduce(mean_spin_sum, op=dist.ReduceOp.SUM)
-    mean_spin_sum = mean_spin_sum / total_samples
+    mean_spin_sum = mean_spin_sum / n
     spin_var = torch.sum((spin_sum - mean_spin_sum) ** 2)
+    spin_fourth = torch.sum((spin_sum - mean_spin_sum) ** 4)
     if world_size > 1:
         dist.all_reduce(spin_var, op=dist.ReduceOp.SUM)
-    spin_var = spin_var / (total_samples - 1)
-    return spin_var.item()
+        dist.all_reduce(spin_fourth, op=dist.ReduceOp.SUM)
+    biased_var = spin_var / n
+    biased_fourth = spin_fourth / n
+    unbiased_var = spin_var / (n - 1)
+    unbiased_fourth = n ** 2 / ((n - 2) * (n - 3)) * ((n + 1) / (n - 1) * biased_fourth - 3 * biased_var ** 2)
+    return unbiased_var.item(), unbiased_fourth.item()

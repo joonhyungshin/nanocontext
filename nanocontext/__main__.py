@@ -7,7 +7,7 @@ import torch
 
 from nanocontext.data.broadcast_tree import broadcast_tree_data_loader, decode_trees
 from nanocontext.models.nanochat import NanochatConfig, Nanochat
-from nanocontext.evaluate import evaluate_var_sum
+from nanocontext.evaluate import evaluate_moments
 from nanocontext.train import NanochatTrainerConfig, NanochatTrainer, TrainerSignal
 from nanocontext.sample import NanochatSampler
 from nanocontext.utils import (ddp_context, ddp_world_size, device_to_use, is_main_process,
@@ -184,11 +184,12 @@ def evaluate(evaluate_every, step, num_iterations, model, run, ctx, seed):
         for _ in range(height - 1):
             max_tokens = d * max_tokens + d - 1
         model.eval()
-        sample_var = evaluate_var_sum(model, num_samples, max_tokens, seed=seed)
+        sample_var, sample_fourth = evaluate_moments(model, num_samples, max_tokens, seed=seed)
         model.train()
         echo(f"Sample variance of magnetization for height {height}: {sample_var:.6f}")
         run.log({
             "sample_variance": sample_var,
+            "sample_fourth": sample_fourth,
         }, step=step)
 
 
