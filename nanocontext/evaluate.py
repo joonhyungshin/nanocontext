@@ -9,7 +9,7 @@ from .utils import ddp_world_size
 
 @torch.inference_mode()
 def evaluate_moments(model, tokenizer, num_samples, max_tokens, actual_tokens_hint=None, seed=None):
-    """Computes h-estimators for second and fourth moments."""
+    """Computes sample variance and excess kurtosis."""
     world_size = ddp_world_size()
     n = num_samples * world_size
     sampler = NanochatSampler(model, seed=seed)
