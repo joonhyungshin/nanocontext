@@ -50,8 +50,8 @@ class NanochatSampler:
         return logits
 
     @torch.inference_mode()
-    def generate(self, tokens, num_samples=1, max_tokens=None, end_token=None,
-                 temperature=1.0, top_k=None):
+    def generate_tensor(self, tokens, num_samples=1, max_tokens=None, end_token=None,
+                        temperature=1.0, top_k=None):
         x = torch.tensor([tokens], dtype=torch.long, device=self.device)
         kv_length_hint = (len(tokens) + max_tokens) if max_tokens is not None else self.model.config.sequence_len
         kv_cache = KVCache(
@@ -72,7 +72,7 @@ class NanochatSampler:
             if all(completed):
                 break
             next_x = self.sample_next_token(logits, temperature=temperature, top_k=top_k)
-            next_tokens = next_x[:, 0].tolist()
+            next_tokens = next_x[:, 0]
             if end_token is not None:
                 for i in range(num_samples):
                     if next_tokens[i] == end_token:
@@ -88,9 +88,23 @@ class NanochatSampler:
                 logits = logits[:, -1, :]
                 context_window_pos = 0
             else:
-                x = torch.tensor(next_tokens, dtype=torch.long, device=self.device).unsqueeze(1)
+                x = next_tokens.unsqueeze(1)
                 with autocast():
                     logits = self.model(x, kv_cache=kv_cache)[:, -1, :]
+
+    def generate(self, *args, **kwargs):
+        for tokens in self.generate_tensor(*args, **kwargs):
+            yield tokens.tolist()
+
+    def generate_batch_tensor(self, tokens, num_samples=1, max_tokens=None, end_token=None, **kwargs):
+        fill_value = 0 if end_token is None else end_token
+        results = torch.full((num_samples, len(tokens) + max_tokens), fill_value,
+                             dtype=torch.long, device=self.device)
+        results[:, :len(tokens)] = torch.tensor([tokens], dtype=torch.long, device=self.device)
+        for i, next_tokens in enumerate(self.generate_tensor(tokens, num_samples=num_samples, max_tokens=max_tokens,
+                                                             end_token=end_token, **kwargs)):
+            results[:, i + len(tokens)] = next_tokens
+        return results
 
     def generate_batch(self, tokens, num_samples=1, end_token=None, **kwargs):
         results = [tokens.copy() for _ in range(num_samples)]

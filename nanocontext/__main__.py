@@ -5,7 +5,7 @@ import click
 
 import torch
 
-from nanocontext.data.broadcast_tree import broadcast_tree_data_loader, decode_trees
+from nanocontext.data.broadcast_tree import broadcast_tree_data_loader, SpinTreeTokenizer
 from nanocontext.models.nanochat import NanochatConfig, Nanochat
 from nanocontext.evaluate import evaluate_moments
 from nanocontext.train import NanochatTrainerConfig, NanochatTrainer, TrainerSignal
@@ -78,6 +78,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
                           final_lr_frac=final_lr)
     model_conf = NanochatConfig(**model_kwargs)
     trainer_conf = NanochatTrainerConfig(**trainer_kwargs)
+    tokenizer = SpinTreeTokenizer(vocab_size)
     with ddp_context():
         device = device_to_use()
         world_tokens = device_batch_size * context_len * ddp_world_size()
@@ -90,7 +91,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             target_tokens = param_data_ratio * num_params
             num_iterations = target_tokens // total_batch_size
         dataloader = broadcast_tree_data_loader(d, rho, height,
-                                                device_batch_size, context_len, batch_height, vocab_size,
+                                                device_batch_size, context_len, batch_height, tokenizer,
                                                 device=device, seed=rng.local_numpy_rng)
         wandb_conf = model_kwargs | trainer_kwargs | {
             "d": d,
@@ -112,9 +113,10 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             trainer = NanochatTrainer(trainer_conf, model, dataloader, seed=rng.global_torch_rng)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
                                       partial(sample_validate,sample_every, sample_max_tokens,
-                                              seed=rng.local_torch_rng))
+                                              tokenizer, seed=rng.local_torch_rng))
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
-                                      partial(evaluate,eval_every, run=run, ctx=ctx, seed=rng.local_torch_rng))
+                                      partial(evaluate,eval_every, tokenizer,
+                                              run=run, ctx=ctx, seed=rng.local_torch_rng))
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP, partial(timer_start, ctx=ctx))
             trainer.register_callback(TrainerSignal.POST_OPTIM_STEP,
                                       partial(log_trainer_stats, wandb_log_every, run=run, ctx=ctx))
@@ -177,24 +179,27 @@ def model_hyperparams_from_layers(n_layers, n_heads=None, n_kv_heads=None, n_emb
 echo = main_process(click.echo)
 
 
-def evaluate(evaluate_every, step, num_iterations, model, run, ctx, seed):
+def evaluate(evaluate_every, tokenizer, step, num_iterations, model, run, ctx, seed):
     if evaluate_every is not None and (step % evaluate_every == 0 or step == num_iterations):
         d, height, num_samples = ctx["d"], ctx["eval_height"], ctx["eval_samples"]
         max_tokens = d
+        actual_tokens = d ** height
         for _ in range(height - 1):
             max_tokens = d * max_tokens + d - 1
         model.eval()
-        sample_var, kurtosis = evaluate_moments(model, num_samples, max_tokens, seed=seed)
+        sample_var, kurtosis = evaluate_moments(model, tokenizer, num_samples, max_tokens,
+                                                actual_tokens_hint=actual_tokens, seed=seed)
         model.train()
-        echo(f"Sample variance of magnetization for height {height}: {sample_var:.6f}")
+        echo(f"Samples of scaled magnetization for height {height}: var {sample_var:.6f} and kurtosis {kurtosis:.6f}")
         run.log({
-            "sample_variance": sample_var,
+            "sample_variance": sample_var * actual_tokens,
+            "scaled_sample_variance": sample_var,
             "sample_kurtosis": kurtosis,
         }, step=step)
 
 
 @main_process
-def sample_validate(sample_every, sample_max_tokens, step, num_iterations, model, seed):
+def sample_validate(sample_every, sample_max_tokens, tokenizer, step, num_iterations, model, seed):
     if sample_every is not None and (step % sample_every == 0 or step == num_iterations):
         model.eval()
         sampler = NanochatSampler(model, seed=seed)
@@ -202,7 +207,7 @@ def sample_validate(sample_every, sample_max_tokens, step, num_iterations, model
         if len(tokens) <= 1:
             echo("(empty)")
         else:
-            echo(decode_trees(tokens)[0])
+            echo(next(tokenizer.decode_trees(tokens)))
         model.train()
 
 

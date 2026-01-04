@@ -5,7 +5,7 @@ from nanocontext.utils import d_order, uniform_slices_from_concatenation
 from .common import tokens_to_data
 
 
-class BroadcastTree:
+class OrderedTree:
     class Node:
         def __init__(self, value=None):
             self.parent = None
@@ -17,35 +17,30 @@ class BroadcastTree:
             child.parent = self
 
         def create_child(self, value=None):
-            child = BroadcastTree.Node(value)
+            child = OrderedTree.Node(value)
             self.add_child(child)
             return child
 
         def get_parent_or_create(self):
             created = False
             if self.parent is None:
-                self.parent = BroadcastTree.Node()
+                self.parent = OrderedTree.Node()
                 self.parent.add_child(self)
                 created = True
             return self.parent, created
 
-        def traverse(self, func):
-            func(self)
+        def traverse(self):
+            yield self
             for child in self.children:
-                child.traverse(func)
+                yield from child.traverse()
 
-    def __init__(self, rho, seed=None):
-        self.rho = rho
-        self.rng = np.random.default_rng(seed)
+    def __init__(self):
         self.root = self.Node()
 
-    def get_leaves_values(self):
-        leaves = []
-        def add_to_leaves(node):
+    def get_leaves(self):
+        for node in self.root.traverse():
             if not node.children and node.value is not None:
-                leaves.append(node.value)
-        self.root.traverse(add_to_leaves)
-        return leaves
+                yield node.value
 
     def _draw_node(self, node, canvas, canvas_idx, depth):
         canvas[depth] += " " * (canvas_idx - len(canvas[depth]))
@@ -70,7 +65,7 @@ class BroadcastTree:
         return "\n".join(canvas)
 
 
-class RegularBroadcastTree:
+class BroadcastTree:
     def __init__(self, d, rho, height, root_prob=None, seed=None):
         self.d = d
         self.rho = rho
@@ -92,8 +87,7 @@ class RegularBroadcastTree:
     def sampled(self):
         return len(self.values) == self.height + 1
 
-    @property
-    def leaves(self):
+    def get_leaves(self):
         return self.values[-1] if self.sampled else None
 
     @property
@@ -112,7 +106,7 @@ class RegularBroadcastTree:
 
     def __str__(self):
         if not self.sampled:
-            return
+            return "(not sampled)"
         msg = ""
         for i, layer in enumerate(self.values):
             msg += (" " * (self.d ** (self.height - i) - 1)).join([("+" if node > 0 else "-")
@@ -121,19 +115,49 @@ class RegularBroadcastTree:
         return msg
 
 
-class BroadcastTreeTokenizer:
-    def __init__(self, max_vocab_size):
+class SpinTreeTokenizer:
+    def __init__(self, max_vocab_size, bos_token=0, neg_token=1, pos_token=2, punc_start_token=3):
         self.max_vocab_size = max_vocab_size
+        self.bos_token = bos_token
+        self.neg_token = neg_token
+        self.pos_token = pos_token
+        self.punc_start_token = punc_start_token
 
-    def tokenize(self, tree):
+    def tokenize(self, tree, prepend_bos=False):
         tokens = []
-        for idx, spin in enumerate(tree.leaves):
+        if prepend_bos:
+            tokens.append(self.bos_token)
+        for idx, spin in enumerate(tree.get_leaves()):
             if idx > 0:
                 zero_cnt = d_order(idx, tree.d)
                 if zero_cnt > 0:
-                    tokens.append(min(zero_cnt + 2, self.max_vocab_size))
-            tokens.append(1 if spin < 0 else 2)
+                    tokens.append(min(zero_cnt + self.punc_start_token - 1, self.max_vocab_size - 1))
+            tokens.append(self.neg_token if spin < 0 else self.pos_token)
         return tokens
+
+    def decode_trees(self, tokens):
+        current_tree = None
+        current_node = None
+        for token in tokens:
+            if token == self.bos_token:
+                if current_tree is not None:
+                    yield current_tree
+                current_tree = OrderedTree()
+                current_node = current_tree.root
+            elif token in [self.neg_token, self.pos_token]:
+                spin = -1 if token == self.neg_token else 1
+                if current_tree is None:
+                    raise ValueError(f"invalid tokens: expected {self.bos_token} in the beginning")
+                current_node.create_child(spin)
+            elif token >= 3:
+                jump_height = token - self.punc_start_token + 1
+                for i in range(jump_height):
+                    current_node, created = current_node.get_parent_or_create()
+                    if created:
+                        current_tree.root = current_node
+                for i in range(jump_height):
+                    current_node = current_node.create_child()
+        yield current_tree
 
 
 def dynamic_broadcast_tree(d, rho, height, batch_height, seed=None):
@@ -147,7 +171,7 @@ def dynamic_broadcast_tree(d, rho, height, batch_height, seed=None):
     while len(ancestors) != height - batch_height + 1:
         rho_flip = ancestors[-1] * rho if ancestors else 0
         root_prob = [(1 - rho_flip) / 2, (1 + rho_flip) / 2]
-        tree = RegularBroadcastTree(d, rho, batch_height, root_prob=root_prob, seed=rng)
+        tree = BroadcastTree(d, rho, batch_height, root_prob=root_prob, seed=rng)
         tree.sample()
         yield leaf_idx, tree, ancestors.copy()
         target_idx = len(ancestors) - 1
@@ -167,54 +191,25 @@ def dynamic_broadcast_tree(d, rho, height, batch_height, seed=None):
         leaf_idx += batch_len
 
 
-def tokenized_broadcast_trees(d, rho, height, batch_height, max_vocab_size=32, seed=None):
+def tokenized_broadcast_trees(d, rho, height, batch_height, tokenizer, seed=None):
     rng = np.random.default_rng(seed)
-    tokenizer = BroadcastTreeTokenizer(max_vocab_size - 1)
     while True:
         tree = dynamic_broadcast_tree(d, rho, height, batch_height, seed=rng)
         for leaf_idx, subtree, ancestors in tree:
             tokens = []
             if leaf_idx == 0:
-                tokens.append(0)
+                tokens.append(tokenizer.bos_token)
             else:
                 zero_cnt = d_order(leaf_idx, d)
-                tokens.append(zero_cnt + 2)
+                tokens.append(zero_cnt + tokenizer.punc_start_token - 1)
             tokens.extend(tokenizer.tokenize(subtree))
             yield tokens
 
 
-def broadcast_tree_data_loader(d, rho, height, batch_size, seq_len, batch_height, max_vocab_size=32,
+def broadcast_tree_data_loader(d, rho, height, batch_size, seq_len, batch_height, tokenizer,
                                device="cpu", seed=None):
     needed_tokens = batch_size * seq_len + 1
     rng = np.random.default_rng(seed)
-    trees = tokenized_broadcast_trees(d, rho, height, batch_height, max_vocab_size, rng)
+    trees = tokenized_broadcast_trees(d, rho, height, batch_height, tokenizer, rng)
     for tokens in uniform_slices_from_concatenation(trees, needed_tokens):
         yield tokens_to_data(tokens, batch_size, seq_len, device)
-
-
-def decode_trees(tokens, rho=None, seed=None):
-    trees = []
-    current_tree = None
-    current_node = None
-    rng = np.random.default_rng(seed)
-    for token in tokens:
-        if token == 0:
-            if current_tree is not None:
-                trees.append(current_tree)
-            current_tree = BroadcastTree(rho, seed=rng)
-            current_node = current_tree.root
-        elif token in [1, 2]:
-            spin = -1 if token == 1 else 1
-            if current_tree is None:
-                raise ValueError("invalid tokens: expected 0 in the beginning")
-            current_node.create_child(spin)
-        elif token >= 3:
-            jump_height = token - 2
-            for i in range(jump_height):
-                current_node, created = current_node.get_parent_or_create()
-                if created:
-                    current_tree.root = current_node
-            for i in range(jump_height):
-                current_node = current_node.create_child()
-    trees.append(current_tree)
-    return trees
