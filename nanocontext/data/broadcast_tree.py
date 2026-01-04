@@ -149,7 +149,7 @@ class SpinTreeTokenizer:
                 if current_tree is None:
                     raise ValueError(f"invalid tokens: expected {self.bos_token} in the beginning")
                 current_node.create_child(spin)
-            elif token >= 3:
+            elif token >= self.punc_start_token:
                 jump_height = token - self.punc_start_token + 1
                 for i in range(jump_height):
                     current_node, created = current_node.get_parent_or_create()
