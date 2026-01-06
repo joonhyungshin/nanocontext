@@ -80,7 +80,7 @@ class NanochatSampler:
             yield next_tokens
             num_generated += 1
 
-            if kv_cache.get_pos() + self.context_len > self.model.rotary_seq_len:
+            if kv_cache.get_pos() + self.context_len > self.model.config.rotary_seq_len:
                 context_window[:, context_window_pos] = next_x[:, 0]
                 context_window_pos += 1
             if context_window_pos >= self.context_len:

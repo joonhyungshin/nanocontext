@@ -33,6 +33,7 @@ def cli():
 @click.option("--heads", help="number of heads", type=int)
 @click.option("--kv-heads", help="number of key-value heads", type=int)
 @click.option("--model-dim", help="model dimension", type=int)
+@click.option("--rotary-seq-len", help="rotary sequence length", type=int)
 @click.option("--unembedding-lr", help="unembedding learning rate", default=0.004, type=float)
 @click.option("--embedding-lr", help="embedding learning rate", default=0.2, type=float)
 @click.option("--matrix-lr", help="matrix learning rate", default=0.02, type=float)
@@ -54,7 +55,7 @@ def cli():
 @click.option("--eval-samples", help="number of samples for evaluation", default=32, type=int)
 @click.option("--seed", help="random seed", type=int)
 def train(d, rho, height, device_batch_size, total_batch_size,
-          context_len, vocab_size, layers, heads, kv_heads, model_dim,
+          context_len, vocab_size, layers, heads, kv_heads, model_dim, rotary_seq_len,
           unembedding_lr, embedding_lr, matrix_lr, weight_decay,
           warmup_ratio, warmdown_ratio, final_lr,
           num_iterations, param_data_ratio,
@@ -70,7 +71,8 @@ def train(d, rho, height, device_batch_size, total_batch_size,
         buffer_len *= d
     eval_height = eval_height or height
     heads, kv_heads, model_dim = model_hyperparams_from_layers(layers, heads, kv_heads, model_dim)
-    model_kwargs = dict(sequence_len=context_len, vocab_size=vocab_size,
+    rotary_seq_len = rotary_seq_len or context_len * 10
+    model_kwargs = dict(sequence_len=context_len, vocab_size=vocab_size, rotary_seq_len=rotary_seq_len,
                         n_layers=layers, n_heads=heads, n_kv_heads=kv_heads, n_embd=model_dim)
     trainer_kwargs = dict(unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr,
                           weight_decay=weight_decay,
@@ -134,22 +136,25 @@ def train(d, rho, height, device_batch_size, total_batch_size,
 @click.option("--heads", help="number of heads", type=int)
 @click.option("--kv-heads", help="number of key-value heads", type=int)
 @click.option("--model-dim", help="model dimension", type=int)
+@click.option("--rotary-seq-len", help="rotary sequence length", type=int)
 @click.option("--max-tokens", help="maximum number of tokens", type=int, required=True)
 @click.option("--temperature", help="sampling temperature", default=1.0, type=float)
 @click.option("--top-k", help="top-k sampling", type=int)
 @click.option("--samples", help="number of samples to generate", default=1, type=int)
 @click.option("--model-path", help="path to model", type=str, required=True)
 @click.option("--seed", help="random seed", type=int)
-def generate(context_len, vocab_size, layers, heads, kv_heads, model_dim,
+def generate(context_len, vocab_size, layers, heads, kv_heads, model_dim, rotary_seq_len,
              max_tokens, temperature, top_k, samples,
              model_path, seed):
     rng = RNGManager(seed=seed)
     echo(f"generating with seed: {rng.seed}")
     heads, kv_heads, model_dim = model_hyperparams_from_layers(layers, heads, kv_heads, model_dim)
-    model_kwargs = dict(sequence_len=context_len, vocab_size=vocab_size,
+    rotary_seq_len = rotary_seq_len or context_len * 10
+    model_kwargs = dict(sequence_len=context_len, vocab_size=vocab_size, rotary_seq_len=rotary_seq_len,
                         n_layers=layers, n_heads=heads, n_kv_heads=kv_heads, n_embd=model_dim)
     sampler_kwargs = dict(num_samples=samples,
                           max_tokens=max_tokens, end_token=0, temperature=temperature, top_k=top_k)
+    tokenizer = SpinTreeTokenizer(vocab_size)
     model_conf = NanochatConfig(**model_kwargs)
     with torch.device("meta"):
         model = Nanochat(model_conf)
@@ -162,7 +167,7 @@ def generate(context_len, vocab_size, layers, heads, kv_heads, model_dim,
     sampler = NanochatSampler(model, seed=rng.global_torch_rng)
     tokens = sampler.generate_batch([0], **sampler_kwargs)
     for i in range(samples):
-        for tree in decode_trees(tokens[i]):
+        for tree in tokenizer.decode_trees(tokens[i]):
             echo(tree)
 
 

@@ -20,6 +20,7 @@ class NanochatConfig:
     n_kv_heads: int = 6
     n_embd: int = 768
     rotary_embd_base: int = 10000
+    rotary_seq_len: int = 8192
 
 
 class MLP(nn.Module):
@@ -57,9 +58,8 @@ class Nanochat(nn.Module):
                                 for layer_idx in range(config.n_layers)])
         })
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        self.rotary_seq_len = config.sequence_len * 10
         head_dim = config.n_embd // config.n_heads
-        rotary_emb_shape = (1, self.rotary_seq_len, 1, head_dim // 2)
+        rotary_emb_shape = (1, self.config.rotary_seq_len, 1, head_dim // 2)
         self.register_buffer("rotary_embd_cos",
                              torch.empty(rotary_emb_shape, dtype=torch.bfloat16), persistent=False)
         self.register_buffer("rotary_embd_sin",
@@ -71,7 +71,7 @@ class Nanochat(nn.Module):
         head_dim = self.config.n_embd // self.config.n_heads
         channel_range = torch.arange(0, head_dim - 1, 2, dtype=torch.float32, device=device)
         inv_freq = 1.0 / (self.config.rotary_embd_base ** (channel_range / head_dim))
-        t = torch.arange(self.rotary_seq_len, dtype=torch.float32, device=device)
+        t = torch.arange(self.config.rotary_seq_len, dtype=torch.float32, device=device)
         freq = torch.outer(t, inv_freq)
         cos, sin = freq.cos(), freq.sin()
         cos, sin = cos.bfloat16(), sin.bfloat16()
