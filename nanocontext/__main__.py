@@ -6,7 +6,7 @@ import torch
 
 from nanocontext.data.broadcast_tree import broadcast_tree_data_loader, SpinTreeTokenizer
 from nanocontext.models.nanochat import NanochatConfig, Nanochat
-from nanocontext.evaluate import evaluate_moments
+from nanocontext.evaluate import evaluate_moments, gather_magnets
 from nanocontext.train import NanochatTrainerConfig, NanochatTrainer, TrainerSignal
 from nanocontext.sample import NanochatSampler
 from nanocontext.utils import (ddp_context, ddp_world_size, device_to_use, is_main_process,
@@ -52,6 +52,10 @@ def cli():
 @click.option("--eval-every", help="evaluate every few steps", default=20, type=int)
 @click.option("--eval-height", help="height to use in evaluation", type=int)
 @click.option("--eval-samples", help="number of samples for evaluation", default=32, type=int)
+@click.option("--hist-every", help="compute histogram every few steps", default=100, type=int)
+@click.option("--hist-height", help="height to use in histogram computation", type=int)
+@click.option("--hist-samples", help="number of samples for histogram computation", type=int)
+@click.option("--sample-batch", help="batch size for sampling", type=int)
 @click.option("--seed", help="random seed", type=int)
 def train(d, rho, height, device_batch_size, total_batch_size,
           context_len, vocab_size, layers, heads, kv_heads, model_dim, rotary_seq_len,
@@ -60,6 +64,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
           num_iterations, param_data_ratio,
           save_to, wandb_mode, wandb_log_every,
           eval_every, eval_height, eval_samples,
+          hist_every, hist_height, hist_samples, sample_batch,
           buffer_size, sample_every, sample_max_tokens, seed):
     rng = RNGManager(seed=seed)
     echo(f"training with seed: {rng.seed}")
@@ -69,6 +74,8 @@ def train(d, rho, height, device_batch_size, total_batch_size,
         batch_height += 1
         buffer_len *= d
     eval_height = eval_height or height
+    hist_height = hist_height or eval_height
+    hist_samples = hist_samples or eval_samples
     heads, kv_heads, model_dim = model_hyperparams_from_layers(layers, heads, kv_heads, model_dim)
     rotary_seq_len = rotary_seq_len or context_len * 10
     model_kwargs = dict(sequence_len=context_len, vocab_size=vocab_size, rotary_seq_len=rotary_seq_len,
@@ -82,7 +89,10 @@ def train(d, rho, height, device_batch_size, total_batch_size,
     tokenizer = SpinTreeTokenizer(vocab_size)
     with ddp_context():
         device = device_to_use()
-        world_tokens = device_batch_size * context_len * ddp_world_size()
+        world_size = ddp_world_size()
+        world_tokens = device_batch_size * context_len * world_size
+        eval_samples = (eval_samples + world_size - 1) // world_size * world_size
+        hist_samples = (hist_samples + world_size - 1) // world_size * world_size
         grad_accum_steps = total_batch_size // world_tokens
         with torch.device("meta"):
             model = Nanochat(model_conf)
@@ -102,11 +112,14 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             "total_batch_size": total_batch_size,
             "eval_height": eval_height,
             "eval_samples": eval_samples,
+            "hist_height": hist_height,
+            "hist_samples": hist_samples,
             "seed": rng.seed,
         }
         ctx = wandb_conf | {
             "total_training_time": 0,
             "smooth_train_loss": 0.0,
+            "sample_batch": sample_batch,
         }
         if not is_main_process():
             wandb_mode = "disabled"
@@ -119,6 +132,10 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
                                       evaluate,
                                       eval_every, tokenizer,
+                                      run=run, ctx=ctx, seed=rng.local_torch_rng)
+            trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
+                                      histogram,
+                                      hist_every, tokenizer,
                                       run=run, ctx=ctx, seed=rng.local_torch_rng)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP, timer_start, ctx=ctx)
             trainer.register_callback(TrainerSignal.POST_OPTIM_STEP,
@@ -185,22 +202,45 @@ def model_hyperparams_from_layers(n_layers, n_heads=None, n_kv_heads=None, n_emb
 echo = main_process(click.echo)
 
 
+def get_max_tokens(d, height):
+    max_tokens = d
+    for _ in range(height - 1):
+        max_tokens = d * max_tokens + d - 1
+    return max_tokens
+
+
 def evaluate(evaluate_every, tokenizer, step, num_iterations, model, run, ctx, seed):
     if evaluate_every is not None and (step % evaluate_every == 0 or step == num_iterations):
-        d, height, num_samples = ctx["d"], ctx["eval_height"], ctx["eval_samples"]
-        max_tokens = d
+        d, height, total_samples, batch_samples = (ctx["d"], ctx["eval_height"],
+                                                   ctx["eval_samples"], ctx["sample_batch"])
+        max_tokens = get_max_tokens(d, height)
         actual_tokens = d ** height
-        for _ in range(height - 1):
-            max_tokens = d * max_tokens + d - 1
         model.eval()
-        sample_var, kurtosis = evaluate_moments(model, tokenizer, num_samples, max_tokens,
-                                                actual_tokens_hint=actual_tokens, seed=seed)
+        sample_var, kurtosis = evaluate_moments(model, tokenizer, total_samples, max_tokens,
+                                                batch_samples=batch_samples, actual_tokens_hint=actual_tokens,
+                                                seed=seed)
         model.train()
         echo(f"Samples of scaled magnetization for height {height}: var {sample_var:.6f} and kurtosis {kurtosis:.6f}")
         run.log({
             "sample_variance": sample_var * actual_tokens,
             "scaled_sample_variance": sample_var,
             "sample_kurtosis": kurtosis,
+        }, step=step)
+
+
+def histogram(hist_every, tokenizer, step, num_iterations, model, run, ctx, seed):
+    if hist_every is not None and (step % hist_every == 0 or step == num_iterations):
+        d, height, total_samples, batch_samples = (ctx["d"], ctx["hist_height"],
+                                                   ctx["hist_samples"], ctx["sample_batch"])
+        max_tokens = get_max_tokens(d, height)
+        model.eval()
+        magnets = gather_magnets(
+            model, tokenizer, total_samples, max_tokens,
+            batch_samples=batch_samples, seed=seed
+        ).detach().cpu().numpy()
+        model.train()
+        run.log({
+            "magnets": wandb.Histogram(magnets),
         }, step=step)
 
 

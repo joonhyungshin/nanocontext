@@ -2,19 +2,14 @@ import torch
 import torch.nn.functional as F
 
 from .models.attention import KVCache
-from .utils import autocast
+from .utils import autocast, get_torch_rng
 
 
 class NanochatSampler:
     def __init__(self, model, context_len=None, seed=None):
         self.model = model
         self.context_len = context_len or self.model.config.sequence_len
-        if isinstance(seed, torch.Generator):
-            self.rng = seed
-        else:
-            self.rng = torch.Generator(model.device)
-            if seed is not None:
-                self.rng.manual_seed(seed)
+        self.rng = get_torch_rng(device=self.model.device, seed=seed)
 
     @property
     def device(self):

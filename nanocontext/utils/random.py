@@ -10,6 +10,15 @@ def get_seeds(seed=None):
     return sq.entropy, sq.spawn(1)[0].generate_state(1)[0].item()
 
 
+def get_torch_rng(device="cpu", seed=None):
+    if isinstance(seed, torch.Generator):
+        return seed
+    rng = torch.Generator(device=device)
+    if seed is not None:
+        rng.manual_seed(seed)
+    return rng
+
+
 class RNGManager:
     def __init__(self, seed=None):
         global_sq = np.random.SeedSequence(seed)

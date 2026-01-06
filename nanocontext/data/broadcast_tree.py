@@ -65,22 +65,23 @@ class OrderedTree:
         return "\n".join(canvas)
 
 
-class BroadcastTree:
-    def __init__(self, d, rho, height, root_prob=None, seed=None):
+class BroadcastForest:
+    def __init__(self, d, rho, height, num_trees=1, root_prob=None, seed=None):
         self.d = d
         self.rho = rho
         self.height = height
         self.root_prob = root_prob if root_prob is not None else [0.5, 0.5]
+        self.num_trees = num_trees
         self.values = []
         self.rng = np.random.default_rng(seed)
 
     def sample(self):
-        self.values = [self.rng.choice([-1, 1], size=(1,), p=self.root_prob)]
+        self.values = [self.rng.choice([-1, 1], size=(self.num_trees, 1), p=self.root_prob)]
         cur_size = 1
         flip_prob = [(1 - self.rho) / 2, (1 + self.rho) / 2]
         for i in range(self.height):
-            flip = self.rng.choice([-1, 1], size=(self.d, cur_size), p=flip_prob)
-            self.values.append((flip * self.values[-1]).ravel(order='F'))
+            flip = self.rng.choice([-1, 1], size=(self.num_trees, cur_size, self.d), p=flip_prob)
+            self.values.append((flip * self.values[-1][:, :, np.newaxis]).reshape((self.num_trees, -1)))
             cur_size *= self.d
 
     @property
@@ -88,18 +89,18 @@ class BroadcastTree:
         return len(self.values) == self.height + 1
 
     def get_leaves(self):
-        return self.values[-1] if self.sampled else None
+        return self.values[-1].ravel() if self.sampled else None
 
     @property
-    def root(self):
-        return self.values[0][0] if self.sampled else None
+    def roots(self):
+        return self.values[0][:, 0] if self.sampled else None
 
-    def ancestors(self, leaf_idx):
+    def ancestors(self, tree_idx, leaf_idx):
         if not self.sampled:
             return None
         seq = []
         for i in range(self.height, -1, -1):
-            seq.append(self.values[leaf_idx])
+            seq.append(self.values[i][tree_idx, leaf_idx])
             leaf_idx //= self.d
         seq.reverse()
         return seq
@@ -108,10 +109,11 @@ class BroadcastTree:
         if not self.sampled:
             return "(not sampled)"
         msg = ""
-        for i, layer in enumerate(self.values):
-            msg += (" " * (self.d ** (self.height - i) - 1)).join([("+" if node > 0 else "-")
-                                                                   for node in layer])
-            msg += "\n"
+        for j in range(self.num_trees):
+            for i, layer in enumerate(self.values):
+                msg += (" " * (self.d ** (self.height - i) - 1)).join([("+" if node > 0 else "-")
+                                                                       for node in layer[j]])
+                msg += "\n"
         return msg
 
 
@@ -171,7 +173,7 @@ def dynamic_broadcast_tree(d, rho, height, batch_height, seed=None):
     while len(ancestors) != height - batch_height + 1:
         rho_flip = ancestors[-1] * rho if ancestors else 0
         root_prob = [(1 - rho_flip) / 2, (1 + rho_flip) / 2]
-        tree = BroadcastTree(d, rho, batch_height, root_prob=root_prob, seed=rng)
+        tree = BroadcastForest(d, rho, batch_height, root_prob=root_prob, seed=rng)
         tree.sample()
         yield leaf_idx, tree, ancestors.copy()
         target_idx = len(ancestors) - 1
@@ -179,7 +181,7 @@ def dynamic_broadcast_tree(d, rho, height, batch_height, seed=None):
             sibling_indices[target_idx] = 0
             target_idx -= 1
         if target_idx == -1:
-            new_root = (ancestors[0] if ancestors else tree.root) * rng.choice([-1, 1], p=flip_prob)
+            new_root = (ancestors[0] if ancestors else tree.roots[0]) * rng.choice([-1, 1], p=flip_prob)
             ancestors = [new_root] + ancestors
             sibling_indices = [0] + sibling_indices
             target_idx = 0
