@@ -1,4 +1,3 @@
-from functools import partial
 import time
 
 import click
@@ -114,14 +113,16 @@ def train(d, rho, height, device_batch_size, total_batch_size,
         with wandb.init(config=wandb_conf, mode=wandb_mode) as run:
             trainer = NanochatTrainer(trainer_conf, model, dataloader, seed=rng.global_torch_rng)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
-                                      partial(sample_validate,sample_every, sample_max_tokens,
-                                              tokenizer, seed=rng.local_torch_rng))
+                                      sample_validate,
+                                      sample_every, sample_max_tokens, tokenizer,
+                                      seed=rng.local_torch_rng)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
-                                      partial(evaluate,eval_every, tokenizer,
-                                              run=run, ctx=ctx, seed=rng.local_torch_rng))
-            trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP, partial(timer_start, ctx=ctx))
+                                      evaluate,
+                                      eval_every, tokenizer,
+                                      run=run, ctx=ctx, seed=rng.local_torch_rng)
+            trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP, timer_start, ctx=ctx)
             trainer.register_callback(TrainerSignal.POST_OPTIM_STEP,
-                                      partial(log_trainer_stats, wandb_log_every, run=run, ctx=ctx))
+                                      log_trainer_stats, wandb_log_every, run=run, ctx=ctx)
             trainer.init_weights()
             trainer.train(num_iterations, grad_accum_steps)
             echo("Training finished")

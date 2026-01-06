@@ -3,6 +3,7 @@ Adapted from nanochat.
 """
 from dataclasses import dataclass
 from enum import Enum
+from functools import partial
 import math
 
 import torch
@@ -50,8 +51,8 @@ class NanochatTrainer:
             if seed is not None:
                 self.rng.manual_seed(seed)
 
-    def register_callback(self, signal, callback):
-        self.callback_registry.setdefault(signal, []).append(callback)
+    def register_callback(self, signal, callback, *args, **kwargs):
+        self.callback_registry.setdefault(signal, []).append(partial(callback, *args, **kwargs))
 
     def fire(self, signal, **payload):
         for callback in self.callback_registry.get(signal, []):
