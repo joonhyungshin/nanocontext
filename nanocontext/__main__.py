@@ -56,6 +56,7 @@ def cli():
 @click.option("--hist-height", help="height to use in histogram computation", type=int)
 @click.option("--hist-samples", help="number of samples for histogram computation", type=int)
 @click.option("--sample-batch", help="batch size for sampling", type=int)
+@click.option("--summary-every", help="train with summary every few tokens", default=-1, type=int)
 @click.option("--seed", help="random seed", type=int)
 def train(d, rho, height, device_batch_size, total_batch_size,
           context_len, vocab_size, layers, heads, kv_heads, model_dim, rotary_seq_len,
@@ -65,7 +66,8 @@ def train(d, rho, height, device_batch_size, total_batch_size,
           save_to, wandb_mode, wandb_log_every,
           eval_every, eval_height, eval_samples,
           hist_every, hist_height, hist_samples, sample_batch,
-          buffer_size, sample_every, sample_max_tokens, seed):
+          buffer_size, sample_every, sample_max_tokens,
+          summary_every, seed):
     rng = RNGManager(seed=seed)
     echo(f"training with seed: {rng.seed}")
     batch_height = 0
@@ -89,6 +91,8 @@ def train(d, rho, height, device_batch_size, total_batch_size,
     tokenizer = SpinTreeTokenizer(vocab_size)
     with ddp_context():
         device = device_to_use()
+        global_torch_rng = rng.global_torch_rng(device)
+        local_torch_rng = rng.local_torch_rng(device)
         world_size = ddp_world_size()
         world_tokens = device_batch_size * context_len * world_size
         eval_samples = (eval_samples + world_size - 1) // world_size * world_size
@@ -103,7 +107,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             num_iterations = target_tokens // total_batch_size
         dataloader = broadcast_tree_data_loader(d, rho, height,
                                                 device_batch_size, context_len, batch_height, tokenizer,
-                                                device=device, seed=rng.local_numpy_rng)
+                                                summary_every=summary_every, device=device, seed=rng.local_numpy_rng)
         wandb_conf = model_kwargs | trainer_kwargs | {
             "d": d,
             "rho": rho,
@@ -114,6 +118,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             "eval_samples": eval_samples,
             "hist_height": hist_height,
             "hist_samples": hist_samples,
+            "summary_every": summary_every,
             "seed": rng.seed,
         }
         ctx = wandb_conf | {
@@ -124,19 +129,19 @@ def train(d, rho, height, device_batch_size, total_batch_size,
         if not is_main_process():
             wandb_mode = "disabled"
         with wandb.init(config=wandb_conf, mode=wandb_mode) as run:
-            trainer = NanochatTrainer(trainer_conf, model, dataloader, seed=rng.global_torch_rng)
+            trainer = NanochatTrainer(trainer_conf, model, dataloader, seed=global_torch_rng)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
                                       sample_validate,
                                       sample_every, sample_max_tokens, tokenizer,
-                                      seed=rng.local_torch_rng)
+                                      num_iterations=num_iterations, seed=local_torch_rng)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
                                       evaluate,
                                       eval_every, tokenizer,
-                                      run=run, ctx=ctx, seed=rng.local_torch_rng)
+                                      num_iterations=num_iterations, run=run, ctx=ctx, seed=local_torch_rng)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
                                       histogram,
                                       hist_every, tokenizer,
-                                      run=run, ctx=ctx, seed=rng.local_torch_rng)
+                                      num_iterations=num_iterations, run=run, ctx=ctx, seed=local_torch_rng)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP, timer_start, ctx=ctx)
             trainer.register_callback(TrainerSignal.POST_OPTIM_STEP,
                                       log_trainer_stats, wandb_log_every, run=run, ctx=ctx)

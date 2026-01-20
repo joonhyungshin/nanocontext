@@ -9,7 +9,7 @@ class NanochatSampler:
     def __init__(self, model, context_len=None, seed=None):
         self.model = model
         self.context_len = context_len or self.model.config.sequence_len
-        self.rng = get_torch_rng(device=self.model.device, seed=seed)
+        self.rng = get_torch_rng(device=self.model.device, seed=seed, local=True)
 
     @property
     def device(self):
@@ -111,3 +111,7 @@ class NanochatSampler:
                 if not completed[i]:
                     results[i].append(next_token)
         return results
+
+
+class SummarySampler:
+    pass

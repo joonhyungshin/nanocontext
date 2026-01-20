@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from torch.optim import AdamW
 
 from nanocontext.optim import DistAdamW, Muon, DistMuon
-from nanocontext.utils import autocast
+from nanocontext.utils import autocast, RNGManager, get_torch_rng
 
 
 @dataclass
@@ -44,12 +44,8 @@ class NanochatTrainer:
         self.dataloader = dataloader
         self.optimizers = self.get_optimizers()
         self.callback_registry = {}
-        if isinstance(seed, torch.Generator):
-            self.rng = seed
-        else:
-            self.rng = torch.Generator(device=model.device)
-            if seed is not None:
-                self.rng.manual_seed(seed)
+        self.rng = get_torch_rng(seed=seed, device=model.device, local=False)
+        self.step = 0
 
     def register_callback(self, signal, callback, *args, **kwargs):
         self.callback_registry.setdefault(signal, []).append(partial(callback, *args, **kwargs))
@@ -59,13 +55,13 @@ class NanochatTrainer:
             callback(**payload)
 
     def train(self, num_iterations, grad_accum_steps, loss_reduction="mean"):
-        step = 0
+        target_iterations = self.step + num_iterations
         train_loss = 0
         x, y = next(self.dataloader)
         stats = {}
         while True:
-            last_step = step == num_iterations
-            self.fire(TrainerSignal.PRE_OPTIM_STEP, step=step, num_iterations=num_iterations, model=self.model)
+            last_step = self.step == target_iterations
+            self.fire(TrainerSignal.PRE_OPTIM_STEP, step=self.step, model=self.model)
             if last_step:
                 break
             for micro_step in range(grad_accum_steps):
@@ -81,8 +77,8 @@ class NanochatTrainer:
                 grad_norm_tensor = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
                 grad_norm = grad_norm_tensor.item()
                 stats["grad_norm"] = grad_norm
-            lrm = self.get_lr_multiplier(step, num_iterations)
-            muon_momentum = self.get_muon_momentum(step)
+            lrm = self.get_lr_multiplier(target_iterations)
+            muon_momentum = self.get_muon_momentum()
             for opt in self.optimizers:
                 for group in opt.param_groups:
                     group["lr"] = group["initial_lr"] * lrm
@@ -96,8 +92,8 @@ class NanochatTrainer:
                 "train_loss": train_loss.item(),
                 "lrm": lrm,
             })
-            self.fire(TrainerSignal.POST_OPTIM_STEP, step=step, num_iterations=num_iterations, stats=stats)
-            step += 1
+            self.fire(TrainerSignal.POST_OPTIM_STEP, step=self.step, num_iterations=num_iterations, stats=stats)
+            self.step += 1
 
     def get_optimizers(self):
         model_dim = self.model.config.n_embd
@@ -123,20 +119,19 @@ class NanochatTrainer:
                 group["initial_lr"] = group["lr"]
         return optimizers
 
-    def get_lr_multiplier(self, step, num_iterations):
-        warmup_iters = round(self.config.warmup_ratio * num_iterations)
-        warmdown_iters = round(self.config.warmdown_ratio * num_iterations)
-        if step < warmup_iters:
-            return (step + 1) / warmup_iters
-        elif step <= num_iterations - warmdown_iters:
+    def get_lr_multiplier(self, total_iterations):
+        warmup_iters = round(self.config.warmup_ratio * total_iterations)
+        warmdown_iters = round(self.config.warmdown_ratio * total_iterations)
+        if self.step < warmup_iters:
+            return (self.step + 1) / warmup_iters
+        elif self.step <= total_iterations - warmdown_iters:
             return 1.0
         else:
-            progress = (num_iterations - step) / warmdown_iters
+            progress = (total_iterations - self.step) / warmdown_iters
             return progress * 1.0 + (1 - progress) * self.config.final_lr_frac
 
-    @staticmethod
-    def get_muon_momentum(step):
-        frac = min(step / 300, 1)
+    def get_muon_momentum(self):
+        frac = min(self.step / 300, 1)
         momentum = (1 - frac) * 0.85 + frac * 0.95
         return momentum
 
@@ -158,3 +153,7 @@ class NanochatTrainer:
                 torch.nn.init.zeros_(module.bias)
         elif isinstance(module, torch.nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=1.0, generator=self.rng)
+
+
+class SummaryTrainer:
+    pass

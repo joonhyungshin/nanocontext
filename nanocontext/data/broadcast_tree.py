@@ -1,6 +1,6 @@
 import numpy as np
 
-from nanocontext.utils import d_order, uniform_slices_from_concatenation
+from nanocontext.utils import d_order, uniform_slices_from_concatenation, get_numpy_rng
 
 from .common import tokens_to_data
 
@@ -88,9 +88,6 @@ class BroadcastForest:
     def sampled(self):
         return len(self.values) == self.height + 1
 
-    def get_leaves(self):
-        return self.values[-1].ravel() if self.sampled else None
-
     @property
     def roots(self):
         return self.values[0][:, 0] if self.sampled else None
@@ -117,13 +114,51 @@ class BroadcastForest:
         return msg
 
 
+class BroadcastTree(BroadcastForest):
+    def __init__(self, d, rho, height, root_prob=None, seed=None):
+        super().__init__(d, rho, height, num_trees=1, root_prob=root_prob, seed=seed)
+
+    def values_at(self, depth: int):
+        return self.values[depth][0, :] if self.sampled else None
+
+    @property
+    def root(self):
+        return self.values_at(0)
+
+    def get_leaves(self):
+        return self.values_at(-1)
+
+    def summarize(self, start, end):
+        idx = start
+        while idx < end:
+            segment_depth = self.height
+            segment_len = 1
+            segment_idx = idx
+            while segment_idx % self.d == 0 and idx + segment_len * self.d <= end:
+                segment_depth -= 1
+                segment_len *= self.d
+                segment_idx //= self.d
+            segment_value = self.values_at(segment_depth)[segment_idx]
+            yield segment_depth, segment_value
+            idx += segment_len
+
+
 class SpinTreeTokenizer:
-    def __init__(self, max_vocab_size, bos_token=0, neg_token=1, pos_token=2, punc_start_token=3):
+    def __init__(self, max_vocab_size, bos_token=0, neg_token=1, pos_token=2, punc_base_token=5,
+                 summary_start_token=3, summary_end_token=4):
         self.max_vocab_size = max_vocab_size
         self.bos_token = bos_token
         self.neg_token = neg_token
         self.pos_token = pos_token
-        self.punc_start_token = punc_start_token
+        self.punc_base_token = punc_base_token
+        self.summary_start_token = summary_start_token
+        self.summary_end_token = summary_end_token
+
+    def punctuation(self, subtree_height):
+        return min(subtree_height + self.punc_base_token, self.max_vocab_size - 1)
+
+    def spin_token(self, spin):
+        return self.neg_token if spin < 0 else self.pos_token
 
     def tokenize(self, tree, prepend_bos=False):
         tokens = []
@@ -133,15 +168,43 @@ class SpinTreeTokenizer:
             if idx > 0:
                 zero_cnt = d_order(idx, tree.d)
                 if zero_cnt > 0:
-                    tokens.append(min(zero_cnt + self.punc_start_token - 1, self.max_vocab_size - 1))
-            tokens.append(self.neg_token if spin < 0 else self.pos_token)
+                    tokens.append(self.punctuation(zero_cnt))
+            tokens.append(self.spin_token(spin))
+        return tokens
+
+    def tokenize_with_summary(self, tree: BroadcastTree,
+                              summary_indices, summary_prepend=None, prepend_bos=False):
+        tokens = []
+        if prepend_bos:
+            tokens.append(self.bos_token)
+        for idx, spin in enumerate(tree.get_leaves()):
+            if idx in summary_indices:
+                tokens.append(self.summary_start_token)
+                if summary_prepend:
+                    tokens.extend(summary_prepend)
+                for summary_depth, summary_spin in tree.summarize(0, idx):
+                    tokens.append(self.punctuation(tree.height - summary_depth))
+                    tokens.append(self.spin_token(summary_spin))
+                tokens.append(self.summary_end_token)
+            if idx > 0:
+                zero_cnt = d_order(idx, tree.d)
+                if zero_cnt > 0:
+                    tokens.append(self.punctuation(zero_cnt))
+            tokens.append(self.spin_token(spin))
         return tokens
 
     def decode_trees(self, tokens):
         current_tree = None
         current_node = None
+        summary_context = False
         for token in tokens:
-            if token == self.bos_token:
+            if token == self.summary_end_token:
+                summary_context = False
+            elif summary_context:
+                continue
+            elif token == self.summary_start_token:
+                summary_context = True
+            elif token == self.bos_token:
                 if current_tree is not None:
                     yield current_tree
                 current_tree = OrderedTree()
@@ -151,8 +214,8 @@ class SpinTreeTokenizer:
                 if current_tree is None:
                     raise ValueError(f"invalid tokens: expected {self.bos_token} in the beginning")
                 current_node.create_child(spin)
-            elif token >= self.punc_start_token:
-                jump_height = token - self.punc_start_token + 1
+            elif token >= self.punc_base_token:
+                jump_height = token - self.punc_base_token
                 for i in range(jump_height):
                     current_node, created = current_node.get_parent_or_create()
                     if created:
@@ -173,7 +236,7 @@ def dynamic_broadcast_tree(d, rho, height, batch_height, seed=None):
     while len(ancestors) != height - batch_height + 1:
         rho_flip = ancestors[-1] * rho if ancestors else 0
         root_prob = [(1 - rho_flip) / 2, (1 + rho_flip) / 2]
-        tree = BroadcastForest(d, rho, batch_height, root_prob=root_prob, seed=rng)
+        tree = BroadcastTree(d, rho, batch_height, root_prob=root_prob, seed=rng)
         tree.sample()
         yield leaf_idx, tree, ancestors.copy()
         target_idx = len(ancestors) - 1
@@ -181,7 +244,7 @@ def dynamic_broadcast_tree(d, rho, height, batch_height, seed=None):
             sibling_indices[target_idx] = 0
             target_idx -= 1
         if target_idx == -1:
-            new_root = (ancestors[0] if ancestors else tree.roots[0]) * rng.choice([-1, 1], p=flip_prob)
+            new_root = (ancestors[0] if ancestors else tree.root) * rng.choice([-1, 1], p=flip_prob)
             ancestors = [new_root] + ancestors
             sibling_indices = [0] + sibling_indices
             target_idx = 0
@@ -194,7 +257,7 @@ def dynamic_broadcast_tree(d, rho, height, batch_height, seed=None):
 
 
 def tokenized_broadcast_trees(d, rho, height, batch_height, tokenizer, seed=None):
-    rng = np.random.default_rng(seed)
+    rng = get_numpy_rng(seed, local=True)
     while True:
         tree = dynamic_broadcast_tree(d, rho, height, batch_height, seed=rng)
         for leaf_idx, subtree, ancestors in tree:
@@ -203,15 +266,47 @@ def tokenized_broadcast_trees(d, rho, height, batch_height, tokenizer, seed=None
                 tokens.append(tokenizer.bos_token)
             else:
                 zero_cnt = d_order(leaf_idx, d)
-                tokens.append(zero_cnt + tokenizer.punc_start_token - 1)
+                tokens.append(tokenizer.punctuation(zero_cnt))
             tokens.extend(tokenizer.tokenize(subtree))
             yield tokens
 
 
+def tokenized_broadcast_trees_with_summaries(d, rho, height, batch_height, tokenizer, summary_every, seed=None):
+    rng = get_numpy_rng(seed, local=True)
+    batch_len = d ** batch_height
+    while True:
+        tree = dynamic_broadcast_tree(d, rho, height, batch_height, seed=rng)
+        tree_idx = 0
+        summary = []
+        for leaf_idx, subtree, ancestors in tree:
+            tokens = []
+            if leaf_idx == 0:
+                tokens.append(tokenizer.bos_token)
+            else:
+                zero_cnt = d_order(leaf_idx, d)
+                tokens.append(tokenizer.punctuation(zero_cnt))
+            summary_start_idx = (max(leaf_idx, 1) + summary_every - 1) // summary_every * summary_every - leaf_idx
+            summary_indices = range(summary_start_idx, batch_len, summary_every)
+            tokens.extend(tokenizer.tokenize_with_summary(subtree, summary_indices, summary_prepend=summary))
+            yield tokens
+            pop_cnt = d_order(tree_idx + 1, d)
+            if pop_cnt > 0:
+                summary = summary[:-pop_cnt * (2 * d - 2)]
+                summary.append(tokenizer.punctuation(batch_height + pop_cnt))
+                summary.append(ancestors[-pop_cnt])
+            else:
+                summary.append(tokenizer.punctuation(batch_height))
+                summary.append(tokenizer.spin_token(subtree.root))
+            tree_idx += 1
+
+
 def broadcast_tree_data_loader(d, rho, height, batch_size, seq_len, batch_height, tokenizer,
-                               device="cpu", seed=None):
+                               summary_every=-1, device="cpu", seed=None):
     needed_tokens = batch_size * seq_len + 1
-    rng = np.random.default_rng(seed)
-    trees = tokenized_broadcast_trees(d, rho, height, batch_height, tokenizer, rng)
+    rng = get_numpy_rng(seed, local=True)
+    if summary_every == -1:
+        trees = tokenized_broadcast_trees(d, rho, height, batch_height, tokenizer, rng)
+    else:
+        trees = tokenized_broadcast_trees_with_summaries(d, rho, height, batch_height, tokenizer, summary_every, rng)
     for tokens in uniform_slices_from_concatenation(trees, needed_tokens):
         yield tokens_to_data(tokens, batch_size, seq_len, device)
