@@ -156,13 +156,22 @@ class SpinTreeTokenizer:
         self.summary_neg_token = summary_neg_token
         self.summary_pos_token = summary_pos_token
 
-    def punctuation(self, subtree_height):
-        return min(subtree_height + self.punc_base_token, self.max_vocab_size - 1)
+    def punctuation(self, subtree_height, summary=False):
+        token = min(subtree_height * 2 + self.punc_base_token, self.max_vocab_size - 2)
+        if summary:
+            token += 1
+        return token
+
+    def subtree_height(self, punc_token):
+        return (punc_token - self.punc_base_token) // 2
 
     def spin_token(self, spin, summary=False):
         pos_token = self.summary_pos_token if summary else self.pos_token
         neg_token = self.summary_neg_token if summary else self.neg_token
         return neg_token if spin < 0 else pos_token
+
+    def sign(self, spin_token):
+        return -1 if spin_token == self.neg_token else 1
 
     def tokenize(self, tree, prepend_bos=False):
         tokens = []
@@ -187,7 +196,7 @@ class SpinTreeTokenizer:
                 if summary_prepend:
                     tokens.extend(summary_prepend)
                 for summary_depth, summary_spin in tree.summarize(0, idx):
-                    tokens.append(self.punctuation(tree.height - summary_depth))
+                    tokens.append(self.punctuation(tree.height - summary_depth, summary=True))
                     tokens.append(self.spin_token(summary_spin, summary=True))
                 tokens.append(self.summary_end_token)
             if idx > 0:
@@ -199,7 +208,7 @@ class SpinTreeTokenizer:
             tokens.append(self.summary_start_token)
             if summary_prepend:
                 tokens.extend(summary_prepend)
-            tokens.append(self.punctuation(tree.height))
+            tokens.append(self.punctuation(tree.height, summary=True))
             tokens.append(self.spin_token(tree.root, summary=True))
             tokens.append(self.summary_end_token)
         return tokens
@@ -226,7 +235,7 @@ class SpinTreeTokenizer:
                     raise ValueError(f"invalid tokens: expected {self.bos_token} in the beginning")
                 current_node.create_child(spin)
             elif token >= self.punc_base_token:
-                jump_height = token - self.punc_base_token
+                jump_height = self.subtree_height(token)
                 for i in range(jump_height):
                     current_node, created = current_node.get_parent_or_create()
                     if created:
@@ -303,11 +312,11 @@ def tokenized_broadcast_trees_with_summaries(d, rho, height, batch_height, token
             pop_cnt = d_order(tree_idx + 1, d)
             if pop_cnt > 0:
                 summary = summary[:-pop_cnt * (2 * d - 2)]
-                summary.append(tokenizer.punctuation(batch_height + pop_cnt))
-                summary.append(ancestors[-pop_cnt])
+                summary.append(tokenizer.punctuation(batch_height + pop_cnt, summary=True))
+                summary.append(tokenizer.spin_token(ancestors[-pop_cnt], summary=True))
             else:
-                summary.append(tokenizer.punctuation(batch_height))
-                summary.append(tokenizer.spin_token(subtree.root))
+                summary.append(tokenizer.punctuation(batch_height, summary=True))
+                summary.append(tokenizer.spin_token(subtree.root, summary=True))
             tree_idx += 1
 
 
