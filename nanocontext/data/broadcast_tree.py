@@ -123,7 +123,7 @@ class BroadcastTree(BroadcastForest):
 
     @property
     def root(self):
-        return self.values_at(0)
+        return self.values_at(0)[0]
 
     def get_leaves(self):
         return self.values_at(-1)
@@ -144,8 +144,8 @@ class BroadcastTree(BroadcastForest):
 
 
 class SpinTreeTokenizer:
-    def __init__(self, max_vocab_size, bos_token=0, neg_token=1, pos_token=2, punc_base_token=5,
-                 summary_start_token=3, summary_end_token=4):
+    def __init__(self, max_vocab_size, bos_token=0, neg_token=1, pos_token=2, punc_base_token=7,
+                 summary_start_token=3, summary_end_token=4, summary_neg_token=5, summary_pos_token=6):
         self.max_vocab_size = max_vocab_size
         self.bos_token = bos_token
         self.neg_token = neg_token
@@ -153,12 +153,16 @@ class SpinTreeTokenizer:
         self.punc_base_token = punc_base_token
         self.summary_start_token = summary_start_token
         self.summary_end_token = summary_end_token
+        self.summary_neg_token = summary_neg_token
+        self.summary_pos_token = summary_pos_token
 
     def punctuation(self, subtree_height):
         return min(subtree_height + self.punc_base_token, self.max_vocab_size - 1)
 
-    def spin_token(self, spin):
-        return self.neg_token if spin < 0 else self.pos_token
+    def spin_token(self, spin, summary=False):
+        pos_token = self.summary_pos_token if summary else self.pos_token
+        neg_token = self.summary_neg_token if summary else self.neg_token
+        return neg_token if spin < 0 else pos_token
 
     def tokenize(self, tree, prepend_bos=False):
         tokens = []
@@ -184,13 +188,20 @@ class SpinTreeTokenizer:
                     tokens.extend(summary_prepend)
                 for summary_depth, summary_spin in tree.summarize(0, idx):
                     tokens.append(self.punctuation(tree.height - summary_depth))
-                    tokens.append(self.spin_token(summary_spin))
+                    tokens.append(self.spin_token(summary_spin, summary=True))
                 tokens.append(self.summary_end_token)
             if idx > 0:
                 zero_cnt = d_order(idx, tree.d)
                 if zero_cnt > 0:
                     tokens.append(self.punctuation(zero_cnt))
             tokens.append(self.spin_token(spin))
+        if len(tree.get_leaves()) in summary_indices:
+            tokens.append(self.summary_start_token)
+            if summary_prepend:
+                tokens.extend(summary_prepend)
+            tokens.append(self.punctuation(tree.height))
+            tokens.append(self.spin_token(tree.root, summary=True))
+            tokens.append(self.summary_end_token)
         return tokens
 
     def decode_trees(self, tokens):
@@ -285,8 +296,8 @@ def tokenized_broadcast_trees_with_summaries(d, rho, height, batch_height, token
             else:
                 zero_cnt = d_order(leaf_idx, d)
                 tokens.append(tokenizer.punctuation(zero_cnt))
-            summary_start_idx = (max(leaf_idx, 1) + summary_every - 1) // summary_every * summary_every - leaf_idx
-            summary_indices = range(summary_start_idx, batch_len, summary_every)
+            summary_start_idx = (leaf_idx // summary_every + 1) * summary_every - leaf_idx
+            summary_indices = range(summary_start_idx, batch_len + 1, summary_every)
             tokens.extend(tokenizer.tokenize_with_summary(subtree, summary_indices, summary_prepend=summary))
             yield tokens
             pop_cnt = d_order(tree_idx + 1, d)
