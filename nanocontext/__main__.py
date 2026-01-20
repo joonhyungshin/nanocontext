@@ -211,7 +211,7 @@ def get_max_tokens(d, height):
     max_tokens = d
     for _ in range(height - 1):
         max_tokens = d * max_tokens + d - 1
-    return max_tokens
+    return max_tokens * 2  # double the max token for future use (e.g. summaries)
 
 
 def evaluate(evaluate_every, tokenizer, step, num_iterations, model, run, ctx, seed):
