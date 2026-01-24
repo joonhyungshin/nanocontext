@@ -50,13 +50,15 @@ class NanochatSampler:
         completed = [False] * num_samples
         if isinstance(tokens, torch.Tensor):
             x = tokens
+            token_len = tokens.shape[1]
             if not always_start:
                 completed = [end_token is not None and token == end_token for token in tokens[:, -1]]
         else:
             x = torch.tensor([tokens], dtype=torch.long, device=self.device)
+            token_len = len(tokens)
             if not always_start:
                 completed = [tokens[-1] == end_token] * num_samples
-        kv_length_hint = (len(tokens) + max_tokens) if max_tokens is not None else self.model.config.sequence_len
+        kv_length_hint = (token_len + max_tokens) if max_tokens is not None else self.model.config.sequence_len
         kv_cache = KVCache(
             batch_size=num_samples, seq_len=kv_length_hint,
             n_heads=self.model.config.n_heads,
