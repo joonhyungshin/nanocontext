@@ -427,7 +427,7 @@ class SpinTreeTokenizer:
             elif token in [self.neg_token, self.pos_token]:
                 spin = -1 if token == self.neg_token else 1
                 current_node.create_child(spin)
-            elif token >= self.punc_base_token:
+            elif self.is_punc_token(token):
                 jump_height = self.subtree_height(token)
                 for i in range(jump_height):
                     current_node, created = current_node.get_parent_or_create()
@@ -490,19 +490,19 @@ def tokenized_broadcast_trees_with_summaries(d, rho, height, batch_height, token
     beginning = True
     while True:
         tree = LazyBroadcastTree(d, rho, height, seed=rng)
-        num_tokens = num_tokens_expected(tree, prepend_bos=True)
+        num_tokens = num_tokens_expected(tree, prepend_bos=not beginning)
         if beginning:
             summary_indices = range(0, num_tokens, summary_every)
-            beginning = False
         else:
             start_idx = summary_every - len(tokens_window)
             summary_indices = range(start_idx, num_tokens, summary_every)
         for tokens, summary in tokenizer.tokenize_with_summary_stream(tree, batch_height, summary_indices,
-                                                                      prepend_bos=True):
+                                                                      prepend_bos=not beginning):
             tokens_window.extend(tokens)
             if len(tokens_window) % summary_every == 0:
                 yield tokens_window, summary
                 tokens_window = []
+        beginning = False
 
 
 def broadcast_tree_stream_data_loader(d, rho, height, batch_size, seq_len, batch_height, tokenizer,
@@ -520,7 +520,8 @@ def broadcast_tree_stream_data_loader(d, rho, height, batch_size, seq_len, batch
             all_tokens += tokens + summary_write
             if len(all_tokens) == needed_tokens:
                 x, y = tokens_to_data(all_tokens, batch_size, seq_len, device, compact=False)
-                # y[:, :summary_len - 1] = -1
+                y = y.clone()
+                y[:, :summary_len - 1] = -1
                 yield x, y
                 all_tokens = []
             all_tokens += summary_write

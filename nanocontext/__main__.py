@@ -195,7 +195,7 @@ def generate(d, height, context_len, vocab_size, layers, heads, kv_heads, model_
     model.load_state_dict(model_data, strict=True, assign=True)
     model.preprocess()
     model.eval()
-    sampler = NanochatSampler(model, seed=rng.global_torch_rng)
+    sampler = NanochatSampler(model, seed=rng.global_torch_rng())
     prompt = make_prompt(tokenizer, d, height, enable_summary)
     tokens = sampler.generate_batch(prompt, **sampler_kwargs)
     for i in range(samples):
