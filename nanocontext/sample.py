@@ -102,15 +102,16 @@ class NanochatSampler:
 
     def generate_batch_tensor(self, tokens, max_tokens, num_samples=1, end_token=None, **kwargs):
         fill_value = 0 if end_token is None else end_token
-        results = torch.full((num_samples, len(tokens) + max_tokens), fill_value,
+        token_len = tokens.shape[1] if isinstance(tokens, torch.Tensor) else len(tokens)
+        results = torch.full((num_samples, token_len + max_tokens), fill_value,
                              dtype=torch.long, device=self.device)
         if isinstance(tokens, torch.Tensor):
-            results[:, :tokens.shape[1]] = tokens
+            results[:, :token_len] = tokens
         else:
-            results[:, :len(tokens)] = torch.tensor([tokens], dtype=torch.long, device=self.device)
+            results[:, :token_len] = torch.tensor([tokens], dtype=torch.long, device=self.device)
         for i, next_tokens in enumerate(self.generate_tensor(tokens, num_samples=num_samples, max_tokens=max_tokens,
                                                              end_token=end_token, **kwargs)):
-            results[:, i + len(tokens)] = next_tokens
+            results[:, i + token_len] = next_tokens
         return results
 
     def generate_batch(self, tokens, num_samples=1, end_token=None, **kwargs):
