@@ -4,7 +4,7 @@ import click
 
 import torch
 
-from nanocontext.data.broadcast_tree import broadcast_tree_data_loader, SpinTreeTokenizer
+from nanocontext.data.broadcast_tree import broadcast_tree_data_loader, SpinTreeTokenizer, BroadcastTreeEngine
 from nanocontext.models.nanochat import NanochatConfig, Nanochat
 from nanocontext.evaluate import evaluate_moments, gather_magnets
 from nanocontext.train import NanochatTrainerConfig, NanochatTrainer, TrainerSignal
@@ -92,8 +92,6 @@ def train(d, rho, height, device_batch_size, total_batch_size,
     prompt = make_prompt(tokenizer, d, height, enable_summary)
     with ddp_context():
         device = device_to_use()
-        global_torch_rng = rng.global_torch_rng(device)
-        local_torch_rng = rng.local_torch_rng(device)
         world_size = ddp_world_size()
         world_tokens = device_batch_size * context_len * world_size
         eval_samples = (eval_samples + world_size - 1) // world_size * world_size
@@ -109,6 +107,8 @@ def train(d, rho, height, device_batch_size, total_batch_size,
         dataloader = broadcast_tree_data_loader(d, rho, height,
                                                 device_batch_size, context_len, batch_height, tokenizer,
                                                 summary=enable_summary, device=device, seed=rng.local_numpy_rng)
+        sampler = NanochatSampler(model, seed=rng.local_torch_rng(device))
+        engine = BroadcastTreeEngine(tokenizer, sampler, stateful=enable_summary)
         wandb_conf = model_kwargs | trainer_kwargs | {
             "d": d,
             "rho": rho,
@@ -130,19 +130,19 @@ def train(d, rho, height, device_batch_size, total_batch_size,
         if not is_main_process():
             wandb_mode = "disabled"
         with wandb.init(config=wandb_conf, mode=wandb_mode) as run:
-            trainer = NanochatTrainer(trainer_conf, model, dataloader, seed=global_torch_rng)
+            trainer = NanochatTrainer(trainer_conf, model, dataloader, seed=rng.global_torch_rng(device))
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
                                       sample_validate,
-                                      sample_every, sample_max_tokens, tokenizer, prompt,
-                                      num_iterations=num_iterations, seed=local_torch_rng)
+                                      sample_every, sample_max_tokens, engine, prompt,
+                                      num_iterations=num_iterations)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
                                       evaluate,
-                                      eval_every, tokenizer, prompt,
-                                      num_iterations=num_iterations, run=run, ctx=ctx, seed=local_torch_rng)
+                                      eval_every, engine, prompt,
+                                      num_iterations=num_iterations, run=run, ctx=ctx)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
                                       histogram,
-                                      hist_every, tokenizer, prompt,
-                                      num_iterations=num_iterations, run=run, ctx=ctx, seed=local_torch_rng)
+                                      hist_every, engine, prompt,
+                                      num_iterations=num_iterations, run=run, ctx=ctx)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP, timer_start, ctx=ctx)
             trainer.register_callback(TrainerSignal.POST_OPTIM_STEP,
                                       log_trainer_stats, wandb_log_every, run=run, ctx=ctx)
@@ -220,19 +220,18 @@ def get_max_tokens(d, height):
     max_tokens = d
     for _ in range(height - 1):
         max_tokens = d * max_tokens + d - 1
-    return max_tokens * 2  # double the max token for future use (e.g. summaries)
+    return max_tokens
 
 
-def evaluate(evaluate_every, tokenizer, prompt, step, num_iterations, model, run, ctx, seed):
+def evaluate(evaluate_every, engine, prompt, step, num_iterations, model, run, ctx):
     if evaluate_every is not None and (step % evaluate_every == 0 or step == num_iterations):
         d, height, total_samples, batch_samples = (ctx["d"], ctx["eval_height"],
                                                    ctx["eval_samples"], ctx["sample_batch"])
         max_tokens = get_max_tokens(d, height)
         actual_tokens = d ** height
         model.eval()
-        sample_var, kurtosis = evaluate_moments(model, tokenizer, prompt, total_samples, max_tokens,
-                                                batch_samples=batch_samples, actual_tokens_hint=actual_tokens,
-                                                seed=seed)
+        sample_var, kurtosis = evaluate_moments(engine, prompt, total_samples, max_tokens,
+                                                batch_samples=batch_samples, actual_tokens_hint=actual_tokens)
         model.train()
         echo(f"Samples of scaled magnetization for height {height}: var {sample_var:.6f} and kurtosis {kurtosis:.6f}")
         run.log({
@@ -242,15 +241,15 @@ def evaluate(evaluate_every, tokenizer, prompt, step, num_iterations, model, run
         }, step=step)
 
 
-def histogram(hist_every, tokenizer, prompt, step, num_iterations, model, run, ctx, seed):
+def histogram(hist_every, engine, prompt, step, num_iterations, model, run, ctx):
     if hist_every is not None and (step % hist_every == 0 or step == num_iterations):
         d, height, total_samples, batch_samples = (ctx["d"], ctx["hist_height"],
                                                    ctx["hist_samples"], ctx["sample_batch"])
         max_tokens = get_max_tokens(d, height)
         model.eval()
         magnets = gather_magnets(
-            model, tokenizer, prompt, total_samples, max_tokens,
-            batch_samples=batch_samples, seed=seed
+            engine, prompt, total_samples, max_tokens,
+            batch_samples=batch_samples
         ).detach().cpu().numpy()
         model.train()
         run.log({
@@ -259,15 +258,14 @@ def histogram(hist_every, tokenizer, prompt, step, num_iterations, model, run, c
 
 
 @main_process
-def sample_validate(sample_every, sample_max_tokens, tokenizer, prompt, step, num_iterations, model, seed):
+def sample_validate(sample_every, sample_max_tokens, engine, prompt, step, num_iterations, model):
     if sample_every is not None and (step % sample_every == 0 or step == num_iterations):
         model.eval()
-        sampler = NanochatSampler(model, seed=seed)
-        tokens = sampler.generate_batch(prompt, max_tokens=sample_max_tokens, end_token=0)[0]
-        if len(tokens) <= 1:
+        tree = engine.generate_tree(prompt, max_tokens=sample_max_tokens)[0]
+        if tree.is_singleton():
             echo("(empty)")
         else:
-            echo(next(tokenizer.decode_trees(tokens)))
+            echo(tree)
         model.train()
 
 

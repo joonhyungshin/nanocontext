@@ -46,8 +46,16 @@ class NanochatSampler:
 
     @torch.inference_mode()
     def generate_tensor(self, tokens, num_samples=1, max_tokens=None, end_token=None,
-                        temperature=1.0, top_k=None):
-        x = torch.tensor([tokens], dtype=torch.long, device=self.device)
+                        temperature=1.0, top_k=None, always_start=True):
+        completed = [False] * num_samples
+        if isinstance(tokens, torch.Tensor):
+            x = tokens
+            if not always_start:
+                completed = [end_token is not None and token == end_token for token in tokens[:, -1]]
+        else:
+            x = torch.tensor([tokens], dtype=torch.long, device=self.device)
+            if not always_start:
+                completed = [tokens[-1] == end_token] * num_samples
         kv_length_hint = (len(tokens) + max_tokens) if max_tokens is not None else self.model.config.sequence_len
         kv_cache = KVCache(
             batch_size=num_samples, seq_len=kv_length_hint,
@@ -57,7 +65,6 @@ class NanochatSampler:
         )
         logits = self._prefill_context_and_forward(x, kv_cache=kv_cache)
         logits = logits[:, -1, :].expand(num_samples, -1)
-        completed = [False] * num_samples
         context_window = torch.empty((num_samples, self.context_len), dtype=torch.long, device=self.device)
         context_window_pos = 0
         num_generated = 0
@@ -91,11 +98,14 @@ class NanochatSampler:
         for tokens in self.generate_tensor(*args, **kwargs):
             yield tokens.tolist()
 
-    def generate_batch_tensor(self, tokens, num_samples=1, max_tokens=None, end_token=None, **kwargs):
+    def generate_batch_tensor(self, tokens, max_tokens, num_samples=1, end_token=None, **kwargs):
         fill_value = 0 if end_token is None else end_token
         results = torch.full((num_samples, len(tokens) + max_tokens), fill_value,
                              dtype=torch.long, device=self.device)
-        results[:, :len(tokens)] = torch.tensor([tokens], dtype=torch.long, device=self.device)
+        if isinstance(tokens, torch.Tensor):
+            results[:, :tokens.shape[1]] = tokens
+        else:
+            results[:, :len(tokens)] = torch.tensor([tokens], dtype=torch.long, device=self.device)
         for i, next_tokens in enumerate(self.generate_tensor(tokens, num_samples=num_samples, max_tokens=max_tokens,
                                                              end_token=end_token, **kwargs)):
             results[:, i + len(tokens)] = next_tokens
