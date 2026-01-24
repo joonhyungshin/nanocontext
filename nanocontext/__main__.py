@@ -56,7 +56,7 @@ def cli():
 @click.option("--hist-height", help="height to use in histogram computation", type=int)
 @click.option("--hist-samples", help="number of samples for histogram computation", type=int)
 @click.option("--sample-batch", help="batch size for sampling", type=int)
-@click.option("--summary-every", help="train with summary every few tokens", default=-1, type=int)
+@click.option("--enable-summary", help="train with summary", is_flag=True)
 @click.option("--seed", help="random seed", type=int)
 def train(d, rho, height, device_batch_size, total_batch_size,
           context_len, vocab_size, layers, heads, kv_heads, model_dim, rotary_seq_len,
@@ -67,7 +67,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
           eval_every, eval_height, eval_samples,
           hist_every, hist_height, hist_samples, sample_batch,
           buffer_size, sample_every, sample_max_tokens,
-          summary_every, seed):
+          enable_summary, seed):
     rng = RNGManager(seed=seed)
     echo(f"training with seed: {rng.seed}")
     batch_height = 0
@@ -89,6 +89,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
     model_conf = NanochatConfig(**model_kwargs)
     trainer_conf = NanochatTrainerConfig(**trainer_kwargs)
     tokenizer = SpinTreeTokenizer(vocab_size)
+    prompt = make_prompt(tokenizer, d, height, enable_summary)
     with ddp_context():
         device = device_to_use()
         global_torch_rng = rng.global_torch_rng(device)
@@ -107,7 +108,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             num_iterations = target_tokens // total_batch_size
         dataloader = broadcast_tree_data_loader(d, rho, height,
                                                 device_batch_size, context_len, batch_height, tokenizer,
-                                                summary_every=summary_every, device=device, seed=rng.local_numpy_rng)
+                                                summary=enable_summary, device=device, seed=rng.local_numpy_rng)
         wandb_conf = model_kwargs | trainer_kwargs | {
             "d": d,
             "rho": rho,
@@ -118,7 +119,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             "eval_samples": eval_samples,
             "hist_height": hist_height,
             "hist_samples": hist_samples,
-            "summary_every": summary_every,
+            "enable_summary": enable_summary,
             "seed": rng.seed,
         }
         ctx = wandb_conf | {
@@ -132,15 +133,15 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             trainer = NanochatTrainer(trainer_conf, model, dataloader, seed=global_torch_rng)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
                                       sample_validate,
-                                      sample_every, sample_max_tokens, tokenizer,
+                                      sample_every, sample_max_tokens, tokenizer, prompt,
                                       num_iterations=num_iterations, seed=local_torch_rng)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
                                       evaluate,
-                                      eval_every, tokenizer,
+                                      eval_every, tokenizer, prompt,
                                       num_iterations=num_iterations, run=run, ctx=ctx, seed=local_torch_rng)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
                                       histogram,
-                                      hist_every, tokenizer,
+                                      hist_every, tokenizer, prompt,
                                       num_iterations=num_iterations, run=run, ctx=ctx, seed=local_torch_rng)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP, timer_start, ctx=ctx)
             trainer.register_callback(TrainerSignal.POST_OPTIM_STEP,
@@ -153,6 +154,8 @@ def train(d, rho, height, device_batch_size, total_batch_size,
 
 
 @cli.command()
+@click.option("-d", help="number of children of a tree", type=int)
+@click.option("--height", help="desired height of generated tree", type=int)
 @click.option("--context-size", "context_len", help="context length", default=2048, type=int)
 @click.option("--vocab-size", help="vocab size", default=32, type=int)
 @click.option("--layers", help="number of layers", default=20, type=int)
@@ -165,10 +168,15 @@ def train(d, rho, height, device_batch_size, total_batch_size,
 @click.option("--top-k", help="top-k sampling", type=int)
 @click.option("--samples", help="number of samples to generate", default=1, type=int)
 @click.option("--model-path", help="path to model", type=str, required=True)
+@click.option("--enable-summary", help="train with summary", is_flag=True)
 @click.option("--seed", help="random seed", type=int)
-def generate(context_len, vocab_size, layers, heads, kv_heads, model_dim, rotary_seq_len,
-             max_tokens, temperature, top_k, samples,
+def generate(d, height, context_len, vocab_size, layers, heads, kv_heads, model_dim, rotary_seq_len,
+             max_tokens, temperature, top_k, samples, enable_summary,
              model_path, seed):
+    # TODO: summary mode
+    if enable_summary:
+        if d is None or height is None:
+            raise ValueError("d or height cannot be None in summary mode")
     rng = RNGManager(seed=seed)
     echo(f"generating with seed: {rng.seed}")
     heads, kv_heads, model_dim = model_hyperparams_from_layers(layers, heads, kv_heads, model_dim)
@@ -188,7 +196,8 @@ def generate(context_len, vocab_size, layers, heads, kv_heads, model_dim, rotary
     model.preprocess()
     model.eval()
     sampler = NanochatSampler(model, seed=rng.global_torch_rng)
-    tokens = sampler.generate_batch([0], **sampler_kwargs)
+    prompt = make_prompt(tokenizer, d, height, enable_summary)
+    tokens = sampler.generate_batch(prompt, **sampler_kwargs)
     for i in range(samples):
         for tree in tokenizer.decode_trees(tokens[i]):
             echo(tree)
@@ -214,14 +223,14 @@ def get_max_tokens(d, height):
     return max_tokens * 2  # double the max token for future use (e.g. summaries)
 
 
-def evaluate(evaluate_every, tokenizer, step, num_iterations, model, run, ctx, seed):
+def evaluate(evaluate_every, tokenizer, prompt, step, num_iterations, model, run, ctx, seed):
     if evaluate_every is not None and (step % evaluate_every == 0 or step == num_iterations):
         d, height, total_samples, batch_samples = (ctx["d"], ctx["eval_height"],
                                                    ctx["eval_samples"], ctx["sample_batch"])
         max_tokens = get_max_tokens(d, height)
         actual_tokens = d ** height
         model.eval()
-        sample_var, kurtosis = evaluate_moments(model, tokenizer, total_samples, max_tokens,
+        sample_var, kurtosis = evaluate_moments(model, tokenizer, prompt, total_samples, max_tokens,
                                                 batch_samples=batch_samples, actual_tokens_hint=actual_tokens,
                                                 seed=seed)
         model.train()
@@ -233,14 +242,14 @@ def evaluate(evaluate_every, tokenizer, step, num_iterations, model, run, ctx, s
         }, step=step)
 
 
-def histogram(hist_every, tokenizer, step, num_iterations, model, run, ctx, seed):
+def histogram(hist_every, tokenizer, prompt, step, num_iterations, model, run, ctx, seed):
     if hist_every is not None and (step % hist_every == 0 or step == num_iterations):
         d, height, total_samples, batch_samples = (ctx["d"], ctx["hist_height"],
                                                    ctx["hist_samples"], ctx["sample_batch"])
         max_tokens = get_max_tokens(d, height)
         model.eval()
         magnets = gather_magnets(
-            model, tokenizer, total_samples, max_tokens,
+            model, tokenizer, prompt, total_samples, max_tokens,
             batch_samples=batch_samples, seed=seed
         ).detach().cpu().numpy()
         model.train()
@@ -250,11 +259,11 @@ def histogram(hist_every, tokenizer, step, num_iterations, model, run, ctx, seed
 
 
 @main_process
-def sample_validate(sample_every, sample_max_tokens, tokenizer, step, num_iterations, model, seed):
+def sample_validate(sample_every, sample_max_tokens, tokenizer, prompt, step, num_iterations, model, seed):
     if sample_every is not None and (step % sample_every == 0 or step == num_iterations):
         model.eval()
         sampler = NanochatSampler(model, seed=seed)
-        tokens = sampler.generate_batch([0], max_tokens=sample_max_tokens, end_token=0)[0]
+        tokens = sampler.generate_batch(prompt, max_tokens=sample_max_tokens, end_token=0)[0]
         if len(tokens) <= 1:
             echo("(empty)")
         else:
@@ -295,6 +304,10 @@ def log_trainer_stats(wandb_log_every, run, step, num_iterations, stats, ctx):
 def timer_start(ctx, **_):
     synchronize()
     ctx["timer_start"] = time.time()
+
+
+def make_prompt(tokenizer: SpinTreeTokenizer, d, height, summary):
+    return tokenizer.empty_summary_tokens(height, pad_to=d) if summary else [tokenizer.bos_token]
 
 
 cli()

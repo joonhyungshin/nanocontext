@@ -5,12 +5,16 @@ import torch
 from .dist import device_to_use
 
 
-def d_order(n, d):
+def d_divide(n, d):
     cnt = 0
     while n % d == 0:
         cnt += 1
         n //= d
-    return cnt
+    return n, cnt
+
+
+def d_order(n, d):
+    return d_divide(n, d)[1]
 
 
 def autocast(device=None):
