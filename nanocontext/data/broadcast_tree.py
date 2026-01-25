@@ -584,6 +584,7 @@ def tokenized_broadcast_trees_with_summaries(d, rho, height, batch_height, token
     rng = get_numpy_rng(seed, local=True)
     tokens_window = []
     beginning = True
+    num_trees = 0
     while True:
         tree = LazyBroadcastTree(d, rho, height, seed=rng)
         num_tokens = num_tokens_expected(tree, prepend_bos=not beginning)
@@ -596,9 +597,10 @@ def tokenized_broadcast_trees_with_summaries(d, rho, height, batch_height, token
                                                                       prepend_bos=not beginning):
             tokens_window.extend(tokens)
             if len(tokens_window) % summary_every == 0:
-                yield tokens_window, summary
+                yield num_trees, tokens_window, summary
                 tokens_window = []
         beginning = False
+        num_trees += 1
 
 
 def broadcast_tree_stream_data_loader(d, rho, height, batch_size, seq_len, batch_height, tokenizer,
@@ -610,17 +612,22 @@ def broadcast_tree_stream_data_loader(d, rho, height, batch_size, seq_len, batch
         content_len = seq_len + 1 - 2 * summary_len
         if content_len <= 0:
             raise ValueError("context size too small")
-        stream = tokenized_broadcast_trees_with_summaries(d, rho, height, batch_size, tokenizer, content_len, seed=rng)
-        _, all_tokens = next(stream)
-        for tokens, summary_write in stream:
-            all_tokens += tokens + summary_write
-            if len(all_tokens) == needed_tokens:
-                x, y = tokens_to_data(all_tokens, batch_size, seq_len, device, compact=False)
-                y = y.clone()
-                y[:, :summary_len - 1] = -1
-                yield x, y
-                all_tokens = []
-            all_tokens += summary_write
+        while True:
+            stream = tokenized_broadcast_trees_with_summaries(d, rho, height, batch_size, tokenizer, content_len,
+                                                              seed=rng)
+            _, _, all_tokens = next(stream)
+            for num_trees, tokens, summary_write in stream:
+                all_tokens += tokens + summary_write
+                if len(all_tokens) == needed_tokens:
+                    x, y = tokens_to_data(all_tokens, batch_size, seq_len, device, compact=False)
+                    y = y.clone()
+                    y[:, :summary_len - 1] = -1
+                    yield x, y
+                    all_tokens = []
+                all_tokens += summary_write
+                # Reset every >=3 trees
+                if num_trees >= 3:
+                    break
     else:
         needed_tokens = batch_size * seq_len + 1
         trees = tokenized_broadcast_trees(d, rho, height, batch_height, tokenizer, rng)
