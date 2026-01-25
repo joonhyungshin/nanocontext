@@ -623,11 +623,11 @@ def broadcast_tree_stream_data_loader(d, rho, height, batch_size, seq_len, batch
                     y = y.clone()
                     y[:, :summary_len - 1] = -1
                     yield x, y
+                    # Reset every tree or completed training data
+                    if num_trees >= 1:
+                        break
                     all_tokens = []
                 all_tokens += summary_write
-                # Reset every >=3 trees
-                if num_trees >= 3:
-                    break
     else:
         needed_tokens = batch_size * seq_len + 1
         trees = tokenized_broadcast_trees(d, rho, height, batch_height, tokenizer, rng)
