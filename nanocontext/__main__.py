@@ -183,8 +183,7 @@ def generate(d, height, context_len, vocab_size, layers, heads, kv_heads, model_
     rotary_seq_len = rotary_seq_len or context_len * 10
     model_kwargs = dict(sequence_len=context_len, vocab_size=vocab_size, rotary_seq_len=rotary_seq_len,
                         n_layers=layers, n_heads=heads, n_kv_heads=kv_heads, n_embd=model_dim)
-    sampler_kwargs = dict(num_samples=samples,
-                          max_tokens=max_tokens, end_token=0, temperature=temperature, top_k=top_k)
+    engine_kwargs = dict(num_samples=samples, max_tokens=max_tokens, temperature=temperature, top_k=top_k)
     tokenizer = SpinTreeTokenizer(vocab_size)
     model_conf = NanochatConfig(**model_kwargs)
     with torch.device("meta"):
@@ -198,7 +197,7 @@ def generate(d, height, context_len, vocab_size, layers, heads, kv_heads, model_
     sampler = NanochatSampler(model, seed=rng.global_torch_rng(device))
     engine = BroadcastTreeEngine(tokenizer, sampler, stateful=enable_summary)
     prompt = make_prompt(tokenizer, d, height, enable_summary)
-    for tree in engine.generate_tree(prompt, num_samples=samples):
+    for tree in engine.generate_tree(prompt, **engine_kwargs):
         echo(tree)
 
 
