@@ -4,7 +4,7 @@ import click
 
 import torch
 
-from nanocontext.data.broadcast_tree import broadcast_tree_data_loader, SpinTreeTokenizer, BroadcastTreeEngine
+from nanocontext.data.broadcast_tree import broadcast_tree_data_loader, SpinTreeTokenizer, SimpleEngine, StatefulEngine
 from nanocontext.models.nanochat import NanochatConfig, Nanochat
 from nanocontext.evaluate import evaluate_moments, gather_magnets
 from nanocontext.train import NanochatTrainerConfig, NanochatTrainer, TrainerSignal
@@ -108,7 +108,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
                                                 device_batch_size, context_len, batch_height, tokenizer,
                                                 summary=enable_summary, device=device, seed=rng.local_numpy_rng)
         sampler = NanochatSampler(model, seed=rng.local_torch_rng(device))
-        engine = BroadcastTreeEngine(tokenizer, sampler, stateful=enable_summary)
+        engine = get_engine(tokenizer, sampler, enable_summary)
         wandb_conf = model_kwargs | trainer_kwargs | {
             "d": d,
             "rho": rho,
@@ -195,7 +195,7 @@ def generate(d, height, context_len, vocab_size, layers, heads, kv_heads, model_
     model.preprocess()
     model.eval()
     sampler = NanochatSampler(model, seed=rng.global_torch_rng(device))
-    engine = BroadcastTreeEngine(tokenizer, sampler, stateful=enable_summary)
+    engine = get_engine(tokenizer, sampler, enable_summary)
     prompt = make_prompt(tokenizer, d, height, enable_summary)
     for tree in engine.generate_tree(prompt, **engine_kwargs):
         echo(tree)
@@ -304,6 +304,10 @@ def timer_start(ctx, **_):
 
 def make_prompt(tokenizer: SpinTreeTokenizer, d, height, summary):
     return tokenizer.empty_summary_tokens(height, pad_to=d) if summary else [tokenizer.bos_token]
+
+
+def get_engine(tokenizer: SpinTreeTokenizer, sampler, summary):
+    return StatefulEngine(tokenizer, sampler) if summary else SimpleEngine(tokenizer, sampler)
 
 
 cli()

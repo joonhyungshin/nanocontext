@@ -3,25 +3,26 @@ import math
 import torch
 import torch.distributed as dist
 
-from .data.broadcast_tree import BroadcastTreeEngine
+from .data.broadcast_tree import Engine
 from .utils import ddp_world_size
 
 
 @torch.inference_mode()
-def sample_magnets(engine: BroadcastTreeEngine, prompt, num_samples, max_tokens,
+def sample_magnets(engine: Engine, prompt, num_samples, max_tokens,
                    batch_samples=None):
     batch_samples = batch_samples or num_samples
     magnet = torch.empty(num_samples, device=engine.device)
     tokenizer = engine.tokenizer
     for i in range(0, num_samples, batch_samples):
         actual_batch_samples = min(num_samples - i, batch_samples)
-        tokens = engine.generate_tree_raw(prompt, max_tokens, num_samples=actual_batch_samples, allow_many=True)
+        tokens = engine.generate_tree_tokens_tensor(prompt, max_tokens,
+                                                    num_samples=actual_batch_samples, allow_many=True)
         magnet[i:i + actual_batch_samples] = (torch.sum(tokens == tokenizer.pos_token, dim=1) -
                                               torch.sum(tokens == tokenizer.neg_token, dim=1))
     return magnet
 
 
-def gather_magnets(engine: BroadcastTreeEngine, prompt, total_samples, max_tokens,
+def gather_magnets(engine: Engine, prompt, total_samples, max_tokens,
                    batch_samples=None):
     world_size = ddp_world_size()
     num_samples = (total_samples + world_size - 1) // world_size
@@ -35,7 +36,7 @@ def gather_magnets(engine: BroadcastTreeEngine, prompt, total_samples, max_token
         return magnet
 
 
-def evaluate_moments(engine: BroadcastTreeEngine, prompt, total_samples, max_tokens,
+def evaluate_moments(engine: Engine, prompt, total_samples, max_tokens,
                      batch_samples=None, actual_tokens_hint=None):
     """Computes sample variance and excess kurtosis."""
     world_size = ddp_world_size()
