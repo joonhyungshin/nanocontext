@@ -42,9 +42,13 @@ class SimpleEngine(Engine):
 
 
 class StatefulEngine(Engine):
-    def generate_tree_tokens_tensor_stream(self, prompt, num_samples=1, allow_many=False, max_states=None, **kwargs):
+    def get_summary_and_context_len(self, prompt):
         summary_len = len(prompt)
-        content_len = self.sampler.context_len - 2 * summary_len
+        content_len = self.sampler.context_len + 1 - 2 * summary_len
+        return summary_len, content_len
+
+    def generate_tree_tokens_tensor_stream(self, prompt, num_samples=1, allow_many=False, max_states=None, **kwargs):
+        summary_len, content_len = self.get_summary_and_context_len(prompt)
         max_tokens = content_len + summary_len
         end_token = None if allow_many else self.tokenizer.bos_token
         num_states = 0
@@ -64,8 +68,7 @@ class StatefulEngine(Engine):
             beginning = False
 
     def generate_tree_tokens_tensor(self, prompt, max_tokens, num_samples=1, allow_many=False, **kwargs):
-        summary_len = len(prompt)
-        content_len = self.sampler.context_len - 2 * summary_len
+        summary_len, content_len = self.get_summary_and_context_len(prompt)
         result = torch.full((num_samples, max_tokens), self.tokenizer.bos_token,
                             dtype=torch.long, device=self.device)
         max_states = (max_tokens + content_len - 1) // content_len
