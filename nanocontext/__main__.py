@@ -196,11 +196,10 @@ def generate(d, height, context_len, vocab_size, layers, heads, kv_heads, model_
     model.preprocess()
     model.eval()
     sampler = NanochatSampler(model, seed=rng.global_torch_rng(device))
+    engine = BroadcastTreeEngine(tokenizer, sampler, stateful=enable_summary)
     prompt = make_prompt(tokenizer, d, height, enable_summary)
-    tokens = sampler.generate_batch(prompt, **sampler_kwargs)
-    for i in range(samples):
-        for tree in tokenizer.decode_trees(tokens[i]):
-            echo(tree)
+    for tree in engine.generate_tree(prompt, num_samples=samples):
+        echo(tree)
 
 
 def model_hyperparams_from_layers(n_layers, n_heads=None, n_kv_heads=None, n_embd=None):
