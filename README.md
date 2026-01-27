@@ -5,7 +5,7 @@
 
 This is a project for training a language model on a synthetic language encoded by broadcasting on ordered trees. This is recursively constructed as the following.
 
-- The root has value + or -, each w.p. 1/2.
+- The root has value + or - (which we call _spins_), each w.p. 1/2.
 - Given the value of a node, each of its children inherits the value w.p. $\rho$ and resamples w.p. $1-\rho$, independently of its siblings.
 
 Each non-leaf node represents a _context_ of the leaves in its subtree. For instance, a node at a small depth contains many leaves in its subtrees, representing a long context. This is analogous to how a document is organized: chapters, sections, paragraphs, sentences, and so on.
@@ -18,7 +18,7 @@ In a real world document, there are clear indicators that mark a beginning of a 
 ```
 [BOS] + + 1 - + 2 - - 1 - +
 ```
-encodes a perfect binary tree with leaves `+ + - + - - - +`. Note that `[BOS]` is a special token that indicates the beginning of a sequence.
+encodes a perfect binary tree with leaves `+ + - + - - - +`. Note that `[BOS]` is a special token that indicates the beginning of a sequence. Ignoring the `[BOS]` token, we need $d^h+d^{h-1}-1$ tokens to encode the leaves of a perfect $d$-ary tree with height $h$.
 
 
 ## Running the code
@@ -43,6 +43,7 @@ You can train nanochat on the broadcast model using the script `python -m nanoco
   - `--model-dim`: embedding dimension of the tokens. If not given inferred from the number of layers.
 - Training parameters
   - `--num-iterations`: number of training iterations. If not given inferred from the model size.
+  - `--enable-summary`: train the model as a state machine (see below)
 - Logging
   - `--save-to`: path to save the trained model.
   - `--wandb`: [W&B](https://wandb.ai/site) logging mode (`online`, `offline`, or `disabled`). Defaults to `online`.
@@ -58,12 +59,24 @@ Once nanochat is trained, you can ask it to generate a tree using the script `py
   - `--max-tokens`: maximum number of tokens to generate.
   - `--temperature`: sampling temperature. Defaults to 1.
   - `--samples`: number of samples to generate. Defaults to 1.
+  - `--enable-summary`: generate using the model as a state machine.
 
 Currently, you must specify the model hyperparameters same as the above training step. This is planned to be reworked in the future.
+
+### Evaluating nanochat
+
+We evaluate the model using the distribution of the sum of spins (_total spin_ in short) of a generated tree. Since it takes exactly $d^h+d^{h-1}-1$ tokens to encode a tree, we let the model generate $d^h+d^{h-1}-1$ tokens and count the number of `+` tokens and `-` tokens (even if the generated language is ill-formed).
+
+
+### Training nanochat as a state machine
+
+When the model generates a document (tree), if the context size is smaller than the number of leaves in a single tree ($d^h$), then the old tokens are forgotten and only the recent tokens are used. This leads to a distribution of total spin that is different from the ground truth.
+
+We want the model to somehow memorize and leverage long context. Our strategy is to train the model as a _state machine_. A _state_ represents the distribution of future tokens conditional on the past tokens in the current tree. We train the model so that given the current state, it can predict a next few tokens and the next state.
+
+The crucial part is to encode state information, efficient enough to fit in a small context size. 
 
 
 ## TODO
 
 - Checkpointing
-- Other evaluation metrics...
-- Teach nanochat to use memory? Maybe chain-of-thoughts?

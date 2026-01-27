@@ -4,7 +4,10 @@ import click
 
 import torch
 
-from nanocontext.data.broadcast_tree import broadcast_tree_data_loader, SpinTreeTokenizer, SimpleEngine, StatefulEngine
+from nanocontext.data.broadcast_tree import (
+    broadcast_tree_data_loader, SpinTreeTokenizer, SimpleEngine, StatefulEngine,
+    BroadcastConfig, SummaryTokenizer, SegmentSummaryTokenizer, HierarchySummaryTokenizer
+)
 from nanocontext.models.nanochat import NanochatConfig, Nanochat
 from nanocontext.evaluate import evaluate_moments, gather_magnets
 from nanocontext.train import NanochatTrainerConfig, NanochatTrainer, TrainerSignal
@@ -56,7 +59,8 @@ def cli():
 @click.option("--hist-height", help="height to use in histogram computation", type=int)
 @click.option("--hist-samples", help="number of samples for histogram computation", type=int)
 @click.option("--sample-batch", help="batch size for sampling", type=int)
-@click.option("--enable-summary", help="train with summary", is_flag=True)
+@click.option("--summary", "summary_mode", help="summary mode for training", default="disabled",
+              type=click.Choice(["disabled", "segment", "path"]))
 @click.option("--seed", help="random seed", type=int)
 def train(d, rho, height, device_batch_size, total_batch_size,
           context_len, vocab_size, layers, heads, kv_heads, model_dim, rotary_seq_len,
@@ -67,7 +71,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
           eval_every, eval_height, eval_samples,
           hist_every, hist_height, hist_samples, sample_batch,
           buffer_size, sample_every, sample_max_tokens,
-          enable_summary, seed):
+          summary_mode, seed):
     rng = RNGManager(seed=seed)
     echo(f"training with seed: {rng.seed}")
     batch_height = 0
@@ -80,6 +84,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
     hist_samples = hist_samples or eval_samples
     heads, kv_heads, model_dim = model_hyperparams_from_layers(layers, heads, kv_heads, model_dim)
     rotary_seq_len = rotary_seq_len or context_len * 10
+    broadcast_kwargs = dict(d=d, rho=rho, height=height)
     model_kwargs = dict(sequence_len=context_len, vocab_size=vocab_size, rotary_seq_len=rotary_seq_len,
                         n_layers=layers, n_heads=heads, n_kv_heads=kv_heads, n_embd=model_dim)
     trainer_kwargs = dict(unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr,
@@ -88,8 +93,10 @@ def train(d, rho, height, device_batch_size, total_batch_size,
                           final_lr_frac=final_lr)
     model_conf = NanochatConfig(**model_kwargs)
     trainer_conf = NanochatTrainerConfig(**trainer_kwargs)
-    tokenizer = SpinTreeTokenizer(vocab_size)
-    prompt = make_prompt(tokenizer, d, height, enable_summary)
+    broadcast_conf = BroadcastConfig(**broadcast_kwargs)
+    tokenizer = get_tokenizer(summary_mode, vocab_size)
+    enable_summary = summary_mode != "disabled"
+    prompt = make_prompt(tokenizer, broadcast_conf)
     with ddp_context():
         device = device_to_use()
         world_size = ddp_world_size()
@@ -104,11 +111,11 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             num_params = sum(p.numel() for p in model.parameters())
             target_tokens = param_data_ratio * num_params
             num_iterations = target_tokens // total_batch_size
-        dataloader = broadcast_tree_data_loader(d, rho, height,
+        dataloader = broadcast_tree_data_loader(broadcast_conf,
                                                 device_batch_size, context_len, batch_height, tokenizer,
                                                 summary=enable_summary, device=device, seed=rng.local_numpy_rng)
         sampler = NanochatSampler(model, seed=rng.local_torch_rng(device))
-        engine = get_engine(tokenizer, sampler, enable_summary)
+        engine = get_engine(tokenizer, sampler)
         wandb_conf = model_kwargs | trainer_kwargs | {
             "d": d,
             "rho": rho,
@@ -119,7 +126,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             "eval_samples": eval_samples,
             "hist_height": hist_height,
             "hist_samples": hist_samples,
-            "enable_summary": enable_summary,
+            "summary_mode": summary_mode,
             "seed": rng.seed,
         }
         ctx = wandb_conf | {
@@ -168,24 +175,27 @@ def train(d, rho, height, device_batch_size, total_batch_size,
 @click.option("--top-k", help="top-k sampling", type=int)
 @click.option("--samples", help="number of samples to generate", default=1, type=int)
 @click.option("--model-path", help="path to model", type=str, required=True)
-@click.option("--enable-summary", help="train with summary", is_flag=True)
+@click.option("--summary", "summary_mode", help="summary mode for training", default="disabled",
+              type=click.Choice(["disabled", "segment", "path"]))
 @click.option("--seed", help="random seed", type=int)
 def generate(d, height, context_len, vocab_size, layers, heads, kv_heads, model_dim, rotary_seq_len,
-             max_tokens, temperature, top_k, samples, enable_summary,
+             max_tokens, temperature, top_k, samples, summary_mode,
              model_path, seed):
     # TODO: summary mode
-    if enable_summary:
+    if summary_mode != "disabled":
         if d is None or height is None:
             raise ValueError("d or height cannot be None in summary mode")
     rng = RNGManager(seed=seed)
     echo(f"generating with seed: {rng.seed}")
     heads, kv_heads, model_dim = model_hyperparams_from_layers(layers, heads, kv_heads, model_dim)
     rotary_seq_len = rotary_seq_len or context_len * 10
+    broadcast_kwargs = dict(d=d, rho=0.5, height=height)
     model_kwargs = dict(sequence_len=context_len, vocab_size=vocab_size, rotary_seq_len=rotary_seq_len,
                         n_layers=layers, n_heads=heads, n_kv_heads=kv_heads, n_embd=model_dim)
     engine_kwargs = dict(num_samples=samples, max_tokens=max_tokens, temperature=temperature, top_k=top_k)
-    tokenizer = SpinTreeTokenizer(vocab_size)
+    tokenizer = get_tokenizer(summary_mode, vocab_size)
     model_conf = NanochatConfig(**model_kwargs)
+    broadcast_conf = BroadcastConfig(**broadcast_kwargs)
     with torch.device("meta"):
         model = Nanochat(model_conf)
     device = device_to_use()
@@ -195,8 +205,8 @@ def generate(d, height, context_len, vocab_size, layers, heads, kv_heads, model_
     model.preprocess()
     model.eval()
     sampler = NanochatSampler(model, seed=rng.global_torch_rng(device))
-    engine = get_engine(tokenizer, sampler, enable_summary)
-    prompt = make_prompt(tokenizer, d, height, enable_summary)
+    engine = get_engine(tokenizer, sampler)
+    prompt = make_prompt(tokenizer, broadcast_conf)
     for tree in engine.generate_tree(prompt, **engine_kwargs):
         echo(tree)
 
@@ -302,12 +312,24 @@ def timer_start(ctx, **_):
     ctx["timer_start"] = time.time()
 
 
-def make_prompt(tokenizer: SpinTreeTokenizer, d, height, summary):
-    return tokenizer.empty_summary_tokens(height, pad_to=d) if summary else [tokenizer.bos_token]
+def make_prompt(tokenizer: SpinTreeTokenizer, config: BroadcastConfig):
+    if isinstance(tokenizer, SummaryTokenizer):
+        return tokenizer.init_summary_tokens(config)
+    return [tokenizer.bos_token]
 
 
-def get_engine(tokenizer: SpinTreeTokenizer, sampler, summary):
-    return StatefulEngine(tokenizer, sampler) if summary else SimpleEngine(tokenizer, sampler)
+def get_engine(tokenizer: SpinTreeTokenizer, sampler):
+    if isinstance(tokenizer, SummaryTokenizer):
+        return StatefulEngine(tokenizer, sampler)
+    return SimpleEngine(tokenizer, sampler)
+
+
+def get_tokenizer(summary_mode, vocab_size):
+    if summary_mode == "segment":
+        return SegmentSummaryTokenizer(vocab_size)
+    elif summary_mode == "path":
+        return HierarchySummaryTokenizer(vocab_size)
+    return SpinTreeTokenizer(vocab_size)
 
 
 cli()
