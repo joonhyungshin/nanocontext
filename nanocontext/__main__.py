@@ -130,6 +130,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             "hist_samples": hist_samples,
             "summary_mode": summary_mode,
             "dist_type": dist_type,
+            "batch_height": batch_height,
             "seed": rng.seed,
         }
         ctx = wandb_conf | {
