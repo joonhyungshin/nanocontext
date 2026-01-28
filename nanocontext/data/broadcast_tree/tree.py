@@ -76,7 +76,7 @@ class BroadcastConfig:
 
 
 class AbstractBroadcastForest:
-    def __init__(self, config, seed=None):
+    def __init__(self, config: BroadcastConfig, seed=None):
         self.config = config
         self.rng = np.random.default_rng(seed)
 
@@ -94,14 +94,24 @@ class AbstractBroadcastForest:
 
 
 class BroadcastForest(AbstractBroadcastForest):
-    def __init__(self, config, num_trees=1, root_prob=None, seed=None):
+    def __init__(self, config: BroadcastConfig, num_trees=1, root_prob=None, seed=None):
         super().__init__(config, seed=seed)
         self.root_prob = root_prob if root_prob is not None else [0.5, 0.5]
         self.num_trees = num_trees
         self.values = []
 
+    def _sample_roots(self):
+        root_prob_arr = np.array(self.root_prob)
+        if root_prob_arr.ndim == 1 and root_prob_arr.shape[0] == 2:
+            self.values = [self.rng.choice([-1, 1], size=(self.num_trees, 1), p=self.root_prob)]
+        else:
+            assert root_prob_arr.ndim == 2 and root_prob_arr.shape[0] == 2
+            p = root_prob_arr[1, :, np.newaxis]
+            mask = self.rng.random((self.num_trees, 1)) < p
+            self.values = [2 * mask.astype(int) - 1]
+
     def sample(self):
-        self.values = [self.rng.choice([-1, 1], size=(self.num_trees, 1), p=self.root_prob)]
+        self._sample_roots()
         cur_size = 1
         flip_prob = [(1 - self.rho) / 2, (1 + self.rho) / 2]
         for i in range(self.height):
@@ -116,6 +126,10 @@ class BroadcastForest(AbstractBroadcastForest):
     @property
     def roots(self):
         return self.values[0][:, 0] if self.sampled else None
+
+    @property
+    def all_leaves(self):
+        return self.values[-1] if self.sampled else None
 
     def ancestors(self, tree_idx, leaf_idx):
         if not self.sampled:
@@ -140,7 +154,7 @@ class BroadcastForest(AbstractBroadcastForest):
 
 
 class BroadcastTree(BroadcastForest):
-    def __init__(self, config, root_prob=None, seed=None):
+    def __init__(self, config: BroadcastConfig, root_prob=None, seed=None):
         super().__init__(config, num_trees=1, root_prob=root_prob, seed=seed)
 
     def values_at(self, depth: int):
@@ -183,7 +197,7 @@ class BroadcastTree(BroadcastForest):
 
 
 class LazyBroadcastTree(AbstractBroadcastForest):
-    def __init__(self, config, root_prob=None, seed=None):
+    def __init__(self, config: BroadcastConfig, root_prob=None, seed=None):
         super().__init__(config, seed=seed)
         self.root_prob = root_prob if root_prob is not None else [0.5, 0.5]
         self.rng = np.random.default_rng(seed)
@@ -311,7 +325,13 @@ class LazyBroadcastTree(AbstractBroadcastForest):
                 yield batch_tree, ancestors + subtree_ancestors
 
 
-def dynamic_broadcast_tree(config, batch_height, seed=None):
+def broadcast_factory(config: BroadcastConfig, num_trees=1, root_prob=None, seed=None):
+    if num_trees == 1:
+        return BroadcastTree(config, root_prob=root_prob, seed=seed)
+    return BroadcastForest(config, num_trees=num_trees, root_prob=root_prob, seed=seed)
+
+
+def dynamic_broadcast_tree(config: BroadcastConfig, batch_height, num_trees=1, seed=None):
     ancestors = []
     leaf_idx = 0
     d, rho, height = config.d, config.rho, config.height
@@ -321,9 +341,10 @@ def dynamic_broadcast_tree(config, batch_height, seed=None):
     rng = np.random.default_rng(seed)
     flip_prob = [(1 - rho) / 2, (1 + rho) / 2]
     while len(ancestors) != height - batch_height + 1:
-        rho_flip = ancestors[-1] * rho if ancestors else 0
+        rho_flip = ancestors[-1] * rho if ancestors else np.zeros(num_trees)
         root_prob = [(1 - rho_flip) / 2, (1 + rho_flip) / 2]
-        tree = BroadcastTree(BroadcastConfig(d=d, rho=rho, height=batch_height), root_prob=root_prob, seed=rng)
+        batch_conf = BroadcastConfig(d, rho, batch_height)
+        tree = broadcast_factory(batch_conf, num_trees=num_trees, root_prob=root_prob, seed=rng)
         tree.sample()
         yield leaf_idx, tree, ancestors.copy()
         target_idx = len(ancestors) - 1
@@ -331,13 +352,31 @@ def dynamic_broadcast_tree(config, batch_height, seed=None):
             sibling_indices[target_idx] = 0
             target_idx -= 1
         if target_idx == -1:
-            new_root = (ancestors[0] if ancestors else tree.root) * rng.choice([-1, 1], p=flip_prob)
+            new_root = (ancestors[0] if ancestors else tree.roots) * rng.choice([-1, 1], size=num_trees, p=flip_prob)
             ancestors = [new_root] + ancestors
             sibling_indices = [0] + sibling_indices
             target_idx = 0
         sibling_indices[target_idx] += 1
         target_idx += 1
         while target_idx < len(ancestors):
-            ancestors[target_idx] = ancestors[target_idx - 1] * rng.choice([-1, 1], p=flip_prob)
+            ancestors[target_idx] = ancestors[target_idx - 1] * rng.choice([-1, 1], size=num_trees, p=flip_prob)
             target_idx += 1
         leaf_idx += batch_len
+
+
+def block_autoregressive_tree(config: BroadcastConfig, batch_height, num_trees=1, seed=None):
+    d, rho, height = config.d, config.rho, config.height
+    rng = np.random.default_rng(seed)
+    batch_depth = height - batch_height
+    tree = None
+    for tree_idx in range(d ** batch_depth):
+        if tree_idx == 0:
+            rho_flip = np.zeros(num_trees)
+        else:
+            lca_height = d_order(tree_idx, d) + 1
+            rho_flip = tree.roots * (rho ** (2 * lca_height))
+        root_prob = [(1 - rho_flip) / 2, (1 + rho_flip) / 2]
+        batch_conf = BroadcastConfig(d, rho, batch_height)
+        tree = broadcast_factory(batch_conf, num_trees=num_trees, root_prob=root_prob, seed=rng)
+        tree.sample()
+        yield tree

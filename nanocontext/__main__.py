@@ -2,18 +2,22 @@ import time
 
 import click
 
+import numpy as np
 import torch
 
 from nanocontext.data.broadcast_tree import (
-    broadcast_tree_data_loader, SpinTreeTokenizer, SimpleEngine, StatefulEngine,
-    BroadcastConfig, SummaryTokenizer, SegmentSummaryTokenizer, HierarchySummaryTokenizer
+    broadcast_tree_data_loader, block_autoregressive_tree_data_loader, SpinTreeTokenizer, SimpleEngine, StatefulEngine,
+    BroadcastConfig, SummaryTokenizer, SegmentSummaryTokenizer, HierarchySummaryTokenizer,
+    dynamic_broadcast_tree, block_autoregressive_tree
 )
 from nanocontext.models.nanochat import NanochatConfig, Nanochat
 from nanocontext.evaluate import evaluate_moments, gather_magnets
 from nanocontext.train import NanochatTrainerConfig, NanochatTrainer, TrainerSignal
 from nanocontext.sample import NanochatSampler
-from nanocontext.utils import (ddp_context, ddp_world_size, device_to_use, is_main_process,
-                               main_process, save_model, load_model, synchronize, RNGManager)
+from nanocontext.utils import (
+    ddp_context, ddp_world_size, device_to_use, is_main_process, compute_moments,
+    main_process, save_model, load_model, synchronize, RNGManager
+)
 
 import wandb
 
@@ -49,7 +53,7 @@ def cli():
 @click.option("--wandb", "wandb_mode", help="wandb mode", default="online",
               type=click.Choice(["online", "offline", "disabled"]))
 @click.option("--wandb-log-every", help="wandb log every n steps", default=10, type=int)
-@click.option("--buffer-size", help="buffer size to stream a tree", default=1024, type=int)
+@click.option("--batch-height", help="batch height to stream a tree", type=int)
 @click.option("--sample-every", help="sample a tree every few steps", type=int)
 @click.option("--sample-max-tokens", help="sample max tokens", default=32, type=int)
 @click.option("--eval-every", help="evaluate every few steps", default=20, type=int)
@@ -59,6 +63,8 @@ def cli():
 @click.option("--hist-height", help="height to use in histogram computation", type=int)
 @click.option("--hist-samples", help="number of samples for histogram computation", type=int)
 @click.option("--sample-batch", help="batch size for sampling", type=int)
+@click.option("--dist", "dist_type", help="type of training distribution", default="full",
+              type=click.Choice(["full", "block"]))
 @click.option("--summary", "summary_mode", help="summary mode for training", default="disabled",
               type=click.Choice(["disabled", "segment", "path"]))
 @click.option("--seed", help="random seed", type=int)
@@ -70,16 +76,12 @@ def train(d, rho, height, device_batch_size, total_batch_size,
           save_to, wandb_mode, wandb_log_every,
           eval_every, eval_height, eval_samples,
           hist_every, hist_height, hist_samples, sample_batch,
-          buffer_size, sample_every, sample_max_tokens,
-          summary_mode, seed):
+          batch_height, sample_every, sample_max_tokens,
+          dist_type, summary_mode, seed):
     rng = RNGManager(seed=seed)
     echo(f"training with seed: {rng.seed}")
-    batch_height = 0
-    buffer_len = 1
-    while buffer_len * d <= buffer_size and batch_height < height:
-        batch_height += 1
-        buffer_len *= d
     eval_height = eval_height or height
+    batch_height = batch_height or height
     hist_height = hist_height or eval_height
     hist_samples = hist_samples or eval_samples
     heads, kv_heads, model_dim = model_hyperparams_from_layers(layers, heads, kv_heads, model_dim)
@@ -111,9 +113,9 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             num_params = sum(p.numel() for p in model.parameters())
             target_tokens = param_data_ratio * num_params
             num_iterations = target_tokens // total_batch_size
-        dataloader = broadcast_tree_data_loader(broadcast_conf,
-                                                device_batch_size, context_len, batch_height, tokenizer,
-                                                summary=enable_summary, device=device, seed=rng.local_numpy_rng)
+        dataloader = get_dataloader(dist_type, broadcast_conf,
+                                    device_batch_size, context_len, batch_height, tokenizer,
+                                    summary=enable_summary, device=device, seed=rng.local_numpy_rng)
         sampler = NanochatSampler(model, seed=rng.local_torch_rng(device))
         engine = get_engine(tokenizer, sampler)
         wandb_conf = model_kwargs | trainer_kwargs | {
@@ -127,6 +129,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             "hist_height": hist_height,
             "hist_samples": hist_samples,
             "summary_mode": summary_mode,
+            "dist_type": dist_type,
             "seed": rng.seed,
         }
         ctx = wandb_conf | {
@@ -143,7 +146,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
                                       sample_every, sample_max_tokens, engine, prompt,
                                       num_iterations=num_iterations)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
-                                      evaluate,
+                                      evaluate_model,
                                       eval_every, engine, prompt,
                                       num_iterations=num_iterations, run=run, ctx=ctx)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
@@ -181,7 +184,6 @@ def train(d, rho, height, device_batch_size, total_batch_size,
 def generate(d, height, context_len, vocab_size, layers, heads, kv_heads, model_dim, rotary_seq_len,
              max_tokens, temperature, top_k, samples, summary_mode,
              model_path, seed):
-    # TODO: summary mode
     if summary_mode != "disabled":
         if d is None or height is None:
             raise ValueError("d or height cannot be None in summary mode")
@@ -211,6 +213,33 @@ def generate(d, height, context_len, vocab_size, layers, heads, kv_heads, model_
         echo(tree)
 
 
+@cli.command()
+@click.option("-d", help="number of children of a tree", default=3, type=int)
+@click.option("--rho", help="correlation", type=float, required=True)
+@click.option("--height", help="height of a tree", type=int, required=True)
+@click.option("--samples", help="number of samples to generate", default=1024, type=int)
+@click.option("--dist", "dist_type", help="distribution type", default="full",
+              type=click.Choice(["full", "block"]))
+@click.option("--batch-height", help="batch height to stream a tree", type=int)
+@click.option("--seed", help="random seed", type=int)
+def evaluate(d, rho, height, batch_height, samples, dist_type, seed):
+    rng = RNGManager(seed=seed)
+    broadcast_conf = BroadcastConfig(d=d, rho=rho, height=height)
+    batch_height = batch_height or height
+    # num_leaves = d ** height
+    tree_generator = get_tree_generator(dist_type, broadcast_conf, batch_height,
+                                        num_samples=samples, seed=rng.local_numpy_rng)
+    echo(f"Evaluating with {samples} samples")
+    echo(f"Distribution type: {dist_type}")
+    x = np.zeros(samples)
+    for tree in tree_generator:
+        x += np.sum(tree.all_leaves, axis=1)
+    # x /= math.sqrt(num_leaves)
+    var, kurtosis = compute_moments(x)
+    echo(f"Variance: {var}")
+    echo(f"Kurtosis: {kurtosis}")
+
+
 def model_hyperparams_from_layers(n_layers, n_heads=None, n_kv_heads=None, n_embd=None):
     if not n_embd:
         n_embd = n_layers * 64
@@ -231,7 +260,7 @@ def get_max_tokens(d, height):
     return max_tokens
 
 
-def evaluate(evaluate_every, engine, prompt, step, num_iterations, model, run, ctx):
+def evaluate_model(evaluate_every, engine, prompt, step, num_iterations, model, run, ctx):
     if evaluate_every is not None and (step % evaluate_every == 0 or step == num_iterations):
         d, height, total_samples, batch_samples = (ctx["d"], ctx["eval_height"],
                                                    ctx["eval_samples"], ctx["sample_batch"])
@@ -330,6 +359,24 @@ def get_tokenizer(summary_mode, vocab_size):
     elif summary_mode == "path":
         return HierarchySummaryTokenizer(vocab_size)
     return SpinTreeTokenizer(vocab_size)
+
+
+def get_dataloader(dist_type, config: BroadcastConfig, device_batch_size, context_len, batch_height, tokenizer,
+                   summary=False, device="cpu", seed=None):
+    dataloader_kwargs = dict(config=config, batch_size=device_batch_size, seq_len=context_len,
+                             batch_height=batch_height, tokenizer=tokenizer, device=device, seed=seed)
+    if dist_type == "block":
+        return block_autoregressive_tree_data_loader(**dataloader_kwargs)
+    else:
+        return broadcast_tree_data_loader(**dataloader_kwargs, summary=summary)
+
+
+def get_tree_generator(dist_type, config: BroadcastConfig, batch_height, num_samples, seed=None):
+    if dist_type == "block":
+        yield from block_autoregressive_tree(config, batch_height, num_trees=num_samples, seed=seed)
+    else:
+        for _, tree, __ in dynamic_broadcast_tree(config, batch_height, num_trees=num_samples, seed=seed):
+            yield tree
 
 
 cli()

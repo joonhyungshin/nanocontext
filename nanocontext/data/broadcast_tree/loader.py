@@ -2,7 +2,10 @@ from nanocontext.data.common import tokens_to_data
 from nanocontext.utils import get_numpy_rng, uniform_slices_from_concatenation
 
 from .tree import BroadcastConfig
-from .tokenizer import tokenized_broadcast_trees, tokenized_broadcast_trees_with_summaries
+from .tokenizer import (
+    tokenized_broadcast_trees, tokenized_broadcast_trees_with_summaries,
+    tokenized_block_autoregressive_trees
+)
 
 
 def broadcast_tree_stream_data_loader(config: BroadcastConfig, batch_size, seq_len, batch_height, tokenizer,
@@ -45,3 +48,12 @@ def broadcast_tree_data_loader(config: BroadcastConfig, batch_size, seq_len, bat
     else:
         yield from broadcast_tree_sample_data_loader(config, batch_size, seq_len, batch_height, tokenizer,
                                                      summary=summary, device=device, seed=seed)
+
+
+def block_autoregressive_tree_data_loader(config: BroadcastConfig, batch_size, seq_len, batch_height, tokenizer,
+                                          device="cpu", seed=None):
+    rng = get_numpy_rng(seed, local=True)
+    needed_tokens = batch_size * seq_len + 1
+    trees = tokenized_block_autoregressive_trees(config, batch_height, tokenizer, rng)
+    for tokens in uniform_slices_from_concatenation(trees, needed_tokens):
+        yield tokens_to_data(tokens, batch_size, seq_len, device, compact=True)

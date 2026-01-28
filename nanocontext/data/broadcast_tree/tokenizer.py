@@ -2,7 +2,10 @@ import numpy as np
 
 from nanocontext.utils import d_order, d_divide, get_numpy_rng
 
-from .tree import OrderedTree, BroadcastTree, LazyBroadcastTree, dynamic_broadcast_tree, BroadcastConfig
+from .tree import (
+    OrderedTree, BroadcastTree, LazyBroadcastTree, dynamic_broadcast_tree, BroadcastConfig,
+    block_autoregressive_tree
+)
 
 
 class SpinTreeTokenizer:
@@ -42,7 +45,7 @@ class SpinTreeTokenizer:
             yield self.spin_token(spin)
 
     def tokenize(self, tree: OrderedTree | BroadcastTree, prepend_bos=False):
-        return list(self.tokenize_stream(tree, prepend_bos))
+        return list(self.tokenize_stream(tree, prepend_bos=prepend_bos))
 
     def tokenize_lazy_stream(self, tree: LazyBroadcastTree, batch_height, prepend_bos=False):
         if prepend_bos:
@@ -288,7 +291,7 @@ def tokenized_broadcast_trees(config, batch_height, tokenizer, seed=None):
     rng = get_numpy_rng(seed, local=True)
     while True:
         tree = dynamic_broadcast_tree(config, batch_height, seed=rng)
-        for leaf_idx, subtree, ancestors in tree:
+        for leaf_idx, subtree, _ in tree:
             tokens = []
             if leaf_idx == 0:
                 tokens.append(tokenizer.bos_token)
@@ -296,6 +299,23 @@ def tokenized_broadcast_trees(config, batch_height, tokenizer, seed=None):
                 zero_cnt = d_order(leaf_idx, config.d)
                 tokens.append(tokenizer.punctuation(zero_cnt))
             tokens.extend(tokenizer.tokenize(subtree))
+            yield tokens
+
+
+def tokenized_block_autoregressive_trees(config, batch_height, tokenizer, seed=None):
+    rng = get_numpy_rng(seed, local=True)
+    while True:
+        tree_sequence = block_autoregressive_tree(config, batch_height, seed=rng)
+        leaf_idx = 0
+        for tree in tree_sequence:
+            tokens = []
+            if leaf_idx == 0:
+                tokens.append(tokenizer.bos_token)
+            else:
+                zero_cnt = d_order(leaf_idx, config.d)
+                tokens.append(tokenizer.punctuation(zero_cnt))
+            leaf_idx += tree.num_leaves
+            tokens.extend(tokenizer.tokenize(tree))
             yield tokens
 
 

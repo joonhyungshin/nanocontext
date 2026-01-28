@@ -1,11 +1,13 @@
 from contextlib import nullcontext
 
+import numpy as np
 import torch
 
 from .dist import device_to_use
 
 
 def d_divide(n, d):
+    assert n > 0
     cnt = 0
     while n % d == 0:
         cnt += 1
@@ -15,6 +17,19 @@ def d_divide(n, d):
 
 def d_order(n, d):
     return d_divide(n, d)[1]
+
+
+def compute_moments(x):
+    n = len(x)
+    x_mean = np.mean(x)
+    x_var = np.sum((x - x_mean) ** 2)
+    x_fourth = np.sum((x - x_mean) ** 4)
+    biased_var = x_var / n
+    biased_fourth = x_fourth / n
+    sample_kurtosis = biased_fourth / biased_var ** 2 - 3
+    fisher_kurtosis = (n - 1) / ((n - 2) * (n - 3)) * ((n + 1) * sample_kurtosis + 6)
+    unbiased_var = x_var / (n - 1)
+    return unbiased_var, fisher_kurtosis
 
 
 def autocast(device=None):
