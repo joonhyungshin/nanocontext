@@ -1,5 +1,3 @@
-from fontTools.misc.fixedTools import strToFixed
-
 from nanocontext.data.common import tokens_to_data
 from nanocontext.utils import get_numpy_rng, uniform_slices_from_concatenation
 
