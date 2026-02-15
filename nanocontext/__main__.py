@@ -4,7 +4,6 @@ import click
 
 import numpy as np
 import torch
-from matplotlib import pyplot as plt
 
 from nanocontext.data.broadcast_tree import (
     broadcast_tree_data_loader, block_autoregressive_tree_data_loader, SpinTreeTokenizer, SimpleEngine, StatefulEngine,
@@ -229,6 +228,8 @@ def generate(d, height, context_len, vocab_size, layers, heads, kv_heads, model_
 @click.option("--batch-height", help="batch height to stream a tree", type=int)
 @click.option("--seed", help="random seed", type=int)
 def evaluate(d, rho, height, batch_height, samples, dist_type, seed):
+    from matplotlib import pyplot as plt
+
     rng = RNGManager(seed=seed)
     broadcast_conf = BroadcastConfig(d=d, rho=rho, height=height)
     batch_height = batch_height or height
