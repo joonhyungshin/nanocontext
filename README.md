@@ -43,7 +43,7 @@ You can train nanochat on the broadcast model using the script `python -m nanoco
   - `--model-dim`: embedding dimension of the tokens. If not given inferred from the number of layers.
 - Training parameters
   - `--num-iterations`: number of training iterations. If not given inferred from the model size.
-  - `--enable-summary`: train the model as a state machine (see below)
+  - `--summary-mode`: train the model as a state machine (`segment`, `path`, or `disabled`; see below)
 - Logging
   - `--save-to`: path to save the trained model.
   - `--wandb`: [W&B](https://wandb.ai/site) logging mode (`online`, `offline`, or `disabled`). Defaults to `online`.
@@ -59,7 +59,7 @@ Once nanochat is trained, you can ask it to generate a tree using the script `py
   - `--max-tokens`: maximum number of tokens to generate.
   - `--temperature`: sampling temperature. Defaults to 1.
   - `--samples`: number of samples to generate. Defaults to 1.
-  - `--enable-summary`: generate using the model as a state machine.
+  - `--summary-mode`: generate using the model as a state machine (`segment`, `path`, or `disabled`). Defaults to `disabled`.
 
 Currently, you must specify the model hyperparameters same as the above training step. This is planned to be reworked in the future.
 
@@ -72,9 +72,12 @@ We evaluate the model using the distribution of the sum of spins (_total spin_ i
 
 When the model generates a document (tree), if the context size is smaller than the number of leaves in a single tree ($d^h$), then the old tokens are forgotten and only the recent tokens are used. This leads to a distribution of total spin that is different from the ground truth.
 
-We want the model to somehow memorize and leverage long context. Our strategy is to train the model as a _state machine_. A _state_ represents the distribution of future tokens conditional on the past tokens in the current tree. We train the model so that given the current state, it can predict a next few tokens and the next state.
+We want the model to somehow memorize and leverage long context. Our strategy is to train the model as a _state machine_. A _state_ represents a distribution of future tokens in the current tree. We train the model so that given the current state, it can predict a next few tokens and the next state.
 
-The crucial part is to encode state information, efficient enough to fit in a small context size. 
+The crucial part is to design state transitions and to encode state information, efficient enough to fit in a small context size. Two approaches are used.
+
+- "Segment" encoding. This is a bottom-up approach; as the model sees (either from the training sequence or from its own generated tokens) a new spin and if that concludes a subtree of height $h_1$, the last $d^{h_1}$ tokens is summarized using the root spin of that subtree.  
+- "Path" encoding. The current state is encoded using the spins of the ancestors of the leaf we wish to generate at a given time. This is a top-down approach; when the model generates a document, it starts by generating the root and goes all the way down to the new leaf.
 
 
 ## TODO

@@ -1,5 +1,6 @@
 from contextlib import nullcontext
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
@@ -44,3 +45,11 @@ def synchronize(device=None):
     device = device or device_to_use()
     if device.type == "cuda":
         torch.cuda.synchronize(device)
+
+
+def plot_histogram(wandb_data, **plot_kwargs):
+    data = wandb_data["magnets"]
+    values, bins = data["values"], data["bins"]
+    widths = np.diff(bins)
+    plt.bar(bins[:-1], values, width=widths, align="edge", **plot_kwargs)
+    plt.show()

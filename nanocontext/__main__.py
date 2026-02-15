@@ -4,6 +4,7 @@ import click
 
 import numpy as np
 import torch
+from matplotlib import pyplot as plt
 
 from nanocontext.data.broadcast_tree import (
     broadcast_tree_data_loader, block_autoregressive_tree_data_loader, SpinTreeTokenizer, SimpleEngine, StatefulEngine,
@@ -65,6 +66,8 @@ def cli():
 @click.option("--sample-batch", help="batch size for sampling", type=int)
 @click.option("--dist", "dist_type", help="type of training distribution", default="full",
               type=click.Choice(["full", "block"]))
+@click.option("--data", "data_mode", help="data mode", default="stream",
+              type=click.Choice(["stream", "sample"]))
 @click.option("--summary", "summary_mode", help="summary mode for training", default="disabled",
               type=click.Choice(["disabled", "segment", "path"]))
 @click.option("--seed", help="random seed", type=int)
@@ -77,7 +80,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
           eval_every, eval_height, eval_samples,
           hist_every, hist_height, hist_samples, sample_batch,
           batch_height, sample_every, sample_max_tokens,
-          dist_type, summary_mode, seed):
+          dist_type, data_mode, summary_mode, seed):
     rng = RNGManager(seed=seed)
     echo(f"training with seed: {rng.seed}")
     eval_height = eval_height or height
@@ -115,7 +118,8 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             num_iterations = target_tokens // total_batch_size
         dataloader = get_dataloader(dist_type, broadcast_conf,
                                     device_batch_size, context_len, batch_height, tokenizer,
-                                    summary=enable_summary, device=device, seed=rng.local_numpy_rng)
+                                    summary=enable_summary, data_mode=data_mode, device=device,
+                                    seed=rng.local_numpy_rng)
         sampler = NanochatSampler(model, seed=rng.local_torch_rng(device))
         engine = get_engine(tokenizer, sampler)
         wandb_conf = model_kwargs | trainer_kwargs | {
@@ -131,6 +135,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             "summary_mode": summary_mode,
             "dist_type": dist_type,
             "batch_height": batch_height,
+            "data_mode": data_mode,
             "seed": rng.seed,
         }
         ctx = wandb_conf | {
@@ -239,6 +244,11 @@ def evaluate(d, rho, height, batch_height, samples, dist_type, seed):
     var, kurtosis = compute_moments(x)
     echo(f"Variance: {var}")
     echo(f"Kurtosis: {kurtosis}")
+    echo(f"Histogram:")
+    plt.title(f"Sum of leaves histogram for {dist_type} AR process")
+    plt.xlabel("sum of leaves")
+    plt.hist(x, bins=64)
+    plt.show()
 
 
 def model_hyperparams_from_layers(n_layers, n_heads=None, n_kv_heads=None, n_embd=None):
@@ -363,9 +373,10 @@ def get_tokenizer(summary_mode, vocab_size):
 
 
 def get_dataloader(dist_type, config: BroadcastConfig, device_batch_size, context_len, batch_height, tokenizer,
-                   summary=False, device="cpu", seed=None):
+                   data_mode="stream", summary=False, device="cpu", seed=None):
     dataloader_kwargs = dict(config=config, batch_size=device_batch_size, seq_len=context_len,
-                             batch_height=batch_height, tokenizer=tokenizer, device=device, seed=seed)
+                             batch_height=batch_height, tokenizer=tokenizer, mode=data_mode, device=device,
+                             seed=seed)
     if dist_type == "block":
         return block_autoregressive_tree_data_loader(**dataloader_kwargs)
     else:

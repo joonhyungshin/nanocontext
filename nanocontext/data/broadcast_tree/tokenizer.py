@@ -34,6 +34,9 @@ class SpinTreeTokenizer:
     def sign(self, spin_token):
         return -1 if spin_token == self.neg_token else 1
 
+    def num_tokens(self, d, height, prepend_bos=False):
+        return d ** height + d ** (height - 1) + (1 if prepend_bos else 0)
+
     def tokenize_stream(self, tree: OrderedTree | BroadcastTree, prepend_bos=False):
         if prepend_bos:
             yield self.bos_token
@@ -99,6 +102,9 @@ class SummaryTokenizer(SpinTreeTokenizer):
         if wrap:
             tokens = [self.summary_start_token] + tokens + [self.summary_end_token]
         return tokens
+
+    def num_tokens(self, d, height, prepend_bos=False):
+        return super().num_tokens(d, height, prepend_bos=prepend_bos)
 
     def init_summary(self, config: BroadcastConfig):
         raise NotImplementedError
@@ -327,7 +333,7 @@ def num_tokens_expected(tree, prepend_bos=False):
 
 
 def tokenized_broadcast_trees_with_summaries(config, batch_height, tokenizer: SummaryTokenizer, summary_every,
-                                             seed=None):
+                                             start_idx=0, seed=None):
     rng = get_numpy_rng(seed, local=True)
     tokens_window = []
     beginning = True
@@ -336,14 +342,14 @@ def tokenized_broadcast_trees_with_summaries(config, batch_height, tokenizer: Su
         tree = LazyBroadcastTree(config, seed=rng)
         num_tokens = num_tokens_expected(tree, prepend_bos=not beginning)
         if beginning:
-            summary_indices = range(0, num_tokens, summary_every)
-        else:
-            start_idx = summary_every - len(tokens_window)
             summary_indices = range(start_idx, num_tokens, summary_every)
+        else:
+            new_start_idx = summary_every - len(tokens_window)
+            summary_indices = range(new_start_idx, num_tokens, summary_every)
         for tokens, summary in tokenizer.tokenize_with_summary_stream(tree, batch_height, summary_indices,
                                                                       prepend_bos=not beginning):
             tokens_window.extend(tokens)
-            if len(tokens_window) % summary_every == 0:
+            if len(tokens_window) == 0 or len(tokens_window) >= summary_every:
                 yield num_trees, tokens_window, summary
                 tokens_window = []
         beginning = False

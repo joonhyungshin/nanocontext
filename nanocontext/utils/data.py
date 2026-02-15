@@ -6,8 +6,12 @@ from .compute import device_to_use
 from .dist import main_process
 
 
-def uniform_slices_from_concatenation(generator, size):
+def uniform_slices_from_concatenation(generator, size, start_idx=0):
     token_buffer = deque()
+    while len(token_buffer) < start_idx:
+        token_buffer.extend(next(generator))
+    for _ in range(start_idx):
+        token_buffer.popleft()
     while True:
         while len(token_buffer) < size:
             token_buffer.extend(next(generator))

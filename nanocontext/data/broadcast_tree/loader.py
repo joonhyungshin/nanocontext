@@ -1,3 +1,5 @@
+from fontTools.misc.fixedTools import strToFixed
+
 from nanocontext.data.common import tokens_to_data
 from nanocontext.utils import get_numpy_rng, uniform_slices_from_concatenation
 
@@ -37,7 +39,35 @@ def broadcast_tree_stream_data_loader(config: BroadcastConfig, batch_size, seq_l
 
 def broadcast_tree_sample_data_loader(config, batch_size, seq_len, batch_height, tokenizer,
                                       summary=False, device="cpu", seed=None):
-    raise NotImplementedError
+    rng = get_numpy_rng(seed, local=True)
+    num_tokens = tokenizer.num_tokens(config.d, config.height, prepend_bos=True)
+    if summary:
+        summary_len = len(tokenizer.init_summary_tokens(config))
+        content_len = seq_len + 1 - 2 * summary_len
+        if content_len <= 0:
+            raise ValueError("context size too small")
+        while True:
+            tokens = []
+            for _ in range(batch_size):
+                start_idx = rng.integers(0, num_tokens - 1)
+                stream = tokenized_broadcast_trees_with_summaries(config, batch_height, tokenizer, content_len,
+                                                                  start_idx=start_idx, seed=rng)
+                _, _, all_tokens = next(stream)
+                num_trees, cur_tokens, summary_write = next(stream)
+                all_tokens += cur_tokens + summary_write
+                tokens.extend(all_tokens)
+            x, y = tokens_to_data(tokens, batch_size, seq_len, device, compact=False)
+            y = y.clone()
+            y[:, :summary_len - 1] = -1
+            yield x, y
+    else:
+        while True:
+            tokens = []
+            for _ in range(batch_size):
+                start_idx = rng.integers(0, num_tokens - 1)
+                trees = tokenized_broadcast_trees(config, batch_height, tokenizer, rng)
+                tokens.extend(next(uniform_slices_from_concatenation(trees, seq_len + 1, start_idx=start_idx)))
+            yield tokens_to_data(tokens, batch_size, seq_len, device, compact=False)
 
 
 def broadcast_tree_data_loader(config: BroadcastConfig, batch_size, seq_len, batch_height, tokenizer,
@@ -51,9 +81,19 @@ def broadcast_tree_data_loader(config: BroadcastConfig, batch_size, seq_len, bat
 
 
 def block_autoregressive_tree_data_loader(config: BroadcastConfig, batch_size, seq_len, batch_height, tokenizer,
-                                          device="cpu", seed=None):
+                                          mode="stream", device="cpu", seed=None):
     rng = get_numpy_rng(seed, local=True)
-    needed_tokens = batch_size * seq_len + 1
-    trees = tokenized_block_autoregressive_trees(config, batch_height, tokenizer, rng)
-    for tokens in uniform_slices_from_concatenation(trees, needed_tokens):
-        yield tokens_to_data(tokens, batch_size, seq_len, device, compact=True)
+    if mode == "stream":
+        needed_tokens = batch_size * seq_len + 1
+        trees = tokenized_block_autoregressive_trees(config, batch_height, tokenizer, rng)
+        for tokens in uniform_slices_from_concatenation(trees, needed_tokens):
+            yield tokens_to_data(tokens, batch_size, seq_len, device, compact=True)
+    else:
+        num_tokens = tokenizer.num_tokens(config.d, config.height, prepend_bos=True)
+        while True:
+            tokens = []
+            for _ in range(batch_size):
+                start_idx = rng.integers(0, num_tokens - 1)
+                trees = tokenized_block_autoregressive_trees(config, batch_height, tokenizer, rng)
+                tokens.extend(next(uniform_slices_from_concatenation(trees, seq_len + 1, start_idx=start_idx)))
+            yield tokens_to_data(tokens, batch_size, seq_len, device, compact=False)
