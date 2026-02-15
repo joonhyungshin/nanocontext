@@ -1,6 +1,5 @@
 from contextlib import nullcontext
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
@@ -48,6 +47,8 @@ def synchronize(device=None):
 
 
 def plot_histogram(wandb_data, **plot_kwargs):
+    import matplotlib.pyplot as plt
+
     data = wandb_data["magnets"]
     values, bins = data["values"], data["bins"]
     widths = np.diff(bins)
