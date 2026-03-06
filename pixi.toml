@@ -30,7 +30,10 @@ torchvision = ">=0.24.1"
 [feature.plot.pypi-dependencies]
 matplotlib = ">=3.10.8"
 
+[feature.test.pypi-dependencies]
+pytest = ">=9.0.2"
+
 [environments]
 dsi-cuda = ["cuda"]
 dsi-cpu = ["cpu", "plot"]
-macos = ["cpu", "plot"]
+macos = ["cpu", "plot", "test"]

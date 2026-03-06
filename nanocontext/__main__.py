@@ -6,14 +6,16 @@ import numpy as np
 import torch
 
 from nanocontext.data.broadcast_tree import (
-    broadcast_tree_data_loader, block_autoregressive_tree_data_loader, SpinTreeTokenizer, SimpleEngine, StatefulEngine,
-    BroadcastConfig, SummaryTokenizer, SegmentSummaryTokenizer, HierarchySummaryTokenizer,
-    dynamic_broadcast_tree, block_autoregressive_tree
+    broadcast_tree_data_loader, SimpleEngine, StatefulEngine,
+    SummaryTokenizer, SegmentSummaryTokenizer, HierarchySummaryTokenizer,
+    block_autoregressive_tree, BroadcastTreeTokenizer
 )
+from nanocontext.evaluate.coloring import check_validity
 from nanocontext.models.nanochat import NanochatConfig, Nanochat
-from nanocontext.evaluate import evaluate_moments, gather_magnets
+from nanocontext.evaluate.ising import evaluate_moments, gather_magnets
 from nanocontext.train import NanochatTrainerConfig, NanochatTrainer, TrainerSignal
 from nanocontext.sample import NanochatSampler
+from nanocontext.tree import IsingBroadcastPolicy, ColoringBroadcastPolicy, PerfectTreeConfig
 from nanocontext.utils import (
     ddp_context, ddp_world_size, device_to_use, is_main_process, compute_moments,
     main_process, save_model, load_model, synchronize, RNGManager
@@ -29,12 +31,13 @@ def cli():
 
 @cli.command()
 @click.option("-d", help="number of children of a tree", default=3, type=int)
-@click.option("--rho", help="correlation", type=float, required=True)
+@click.option("--rho", help="correlation for Ising experiment", type=float)
+@click.option("-k", help="number of colors for coloring experiment", type=int)
 @click.option("--height", help="height of a tree", type=int, required=True)
 @click.option("--device-batch-size", help="batch size per device", default=32, type=int)
 @click.option("--total-batch-size", help="total batch size in training", default=524288, type=int)
 @click.option("--context-size", "context_len", help="context length", default=2048, type=int)
-@click.option("--vocab-size", help="vocab size", default=32, type=int)
+@click.option("--vocab-size", help="vocab size", default=64, type=int)
 @click.option("--layers", help="number of layers", default=20, type=int)
 @click.option("--heads", help="number of heads", type=int)
 @click.option("--kv-heads", help="number of key-value heads", type=int)
@@ -63,14 +66,14 @@ def cli():
 @click.option("--hist-height", help="height to use in histogram computation", type=int)
 @click.option("--hist-samples", help="number of samples for histogram computation", type=int)
 @click.option("--sample-batch", help="batch size for sampling", type=int)
-@click.option("--dist", "dist_type", help="type of training distribution", default="full",
-              type=click.Choice(["full", "block"]))
+# @click.option("--dist", "dist_type", help="type of training distribution", default="full",
+#               type=click.Choice(["full", "block"]))
 @click.option("--data", "data_mode", help="data mode", default="stream",
               type=click.Choice(["stream", "sample"]))
 @click.option("--summary", "summary_mode", help="summary mode for training", default="disabled",
               type=click.Choice(["disabled", "segment", "path"]))
 @click.option("--seed", help="random seed", type=int)
-def train(d, rho, height, device_batch_size, total_batch_size,
+def train(d, rho, k, height, device_batch_size, total_batch_size,
           context_len, vocab_size, layers, heads, kv_heads, model_dim, rotary_seq_len,
           unembedding_lr, embedding_lr, matrix_lr, weight_decay,
           warmup_ratio, warmdown_ratio, final_lr,
@@ -79,7 +82,9 @@ def train(d, rho, height, device_batch_size, total_batch_size,
           eval_every, eval_height, eval_samples,
           hist_every, hist_height, hist_samples, sample_batch,
           batch_height, sample_every, sample_max_tokens,
-          dist_type, data_mode, summary_mode, seed):
+          data_mode, summary_mode, seed):
+    if (rho is None and k is None) or not (rho is None or k is None):
+        raise ValueError("exactly one of k (coloring) or rho (Ising) must be given")
     rng = RNGManager(seed=seed)
     echo(f"training with seed: {rng.seed}")
     eval_height = eval_height or height
@@ -88,7 +93,7 @@ def train(d, rho, height, device_batch_size, total_batch_size,
     hist_samples = hist_samples or eval_samples
     heads, kv_heads, model_dim = model_hyperparams_from_layers(layers, heads, kv_heads, model_dim)
     rotary_seq_len = rotary_seq_len or context_len * 10
-    broadcast_kwargs = dict(d=d, rho=rho, height=height)
+    tree_kwargs = dict(d=d, height=height)
     model_kwargs = dict(sequence_len=context_len, vocab_size=vocab_size, rotary_seq_len=rotary_seq_len,
                         n_layers=layers, n_heads=heads, n_kv_heads=kv_heads, n_embd=model_dim)
     trainer_kwargs = dict(unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr,
@@ -97,11 +102,12 @@ def train(d, rho, height, device_batch_size, total_batch_size,
                           final_lr_frac=final_lr)
     model_conf = NanochatConfig(**model_kwargs)
     trainer_conf = NanochatTrainerConfig(**trainer_kwargs)
-    broadcast_conf = BroadcastConfig(**broadcast_kwargs)
-    tokenizer = get_tokenizer(summary_mode, vocab_size)
+    tree_conf = PerfectTreeConfig(**tree_kwargs)
     enable_summary = summary_mode != "disabled"
-    prompt = make_prompt(tokenizer, broadcast_conf)
     with ddp_context():
+        policy, policy_conf = get_policy(rho, k, rng.local_numpy_rng)
+        tokenizer = get_tokenizer(summary_mode, vocab_size, policy)
+        prompt = make_prompt(tokenizer, tree_conf)
         device = device_to_use()
         world_size = ddp_world_size()
         world_tokens = device_batch_size * context_len * world_size
@@ -115,15 +121,14 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             num_params = sum(p.numel() for p in model.parameters())
             target_tokens = param_data_ratio * num_params
             num_iterations = target_tokens // total_batch_size
-        dataloader = get_dataloader(dist_type, broadcast_conf,
+        dataloader = get_dataloader(tree_conf,
                                     device_batch_size, context_len, batch_height, tokenizer,
                                     summary=enable_summary, data_mode=data_mode, device=device,
                                     seed=rng.local_numpy_rng)
         sampler = NanochatSampler(model, seed=rng.local_torch_rng(device))
         engine = get_engine(tokenizer, sampler)
-        wandb_conf = model_kwargs | trainer_kwargs | {
+        wandb_conf = model_kwargs | trainer_kwargs | policy_conf | {
             "d": d,
-            "rho": rho,
             "height": height,
             "device_batch_size": device_batch_size,
             "total_batch_size": total_batch_size,
@@ -132,7 +137,6 @@ def train(d, rho, height, device_batch_size, total_batch_size,
             "hist_height": hist_height,
             "hist_samples": hist_samples,
             "summary_mode": summary_mode,
-            "dist_type": dist_type,
             "batch_height": batch_height,
             "data_mode": data_mode,
             "seed": rng.seed,
@@ -171,6 +175,8 @@ def train(d, rho, height, device_batch_size, total_batch_size,
 @cli.command()
 @click.option("-d", help="number of children of a tree", type=int)
 @click.option("--height", help="desired height of generated tree", type=int)
+@click.option("--rho", help="correlation for Ising experiment", type=float)
+@click.option("-k", help="number of colors for coloring experiment", type=int)
 @click.option("--context-size", "context_len", help="context length", default=2048, type=int)
 @click.option("--vocab-size", help="vocab size", default=32, type=int)
 @click.option("--layers", help="number of layers", default=20, type=int)
@@ -186,23 +192,26 @@ def train(d, rho, height, device_batch_size, total_batch_size,
 @click.option("--summary", "summary_mode", help="summary mode for training", default="disabled",
               type=click.Choice(["disabled", "segment", "path"]))
 @click.option("--seed", help="random seed", type=int)
-def generate(d, height, context_len, vocab_size, layers, heads, kv_heads, model_dim, rotary_seq_len,
+def generate(d, height, rho, k, context_len, vocab_size, layers, heads, kv_heads, model_dim, rotary_seq_len,
              max_tokens, temperature, top_k, samples, summary_mode,
              model_path, seed):
     if summary_mode != "disabled":
         if d is None or height is None:
             raise ValueError("d or height cannot be None in summary mode")
+    if (rho is None and k is None) or not (rho is None or k is None):
+        raise ValueError("exactly one of k (coloring) or rho (Ising) must be given")
     rng = RNGManager(seed=seed)
     echo(f"generating with seed: {rng.seed}")
     heads, kv_heads, model_dim = model_hyperparams_from_layers(layers, heads, kv_heads, model_dim)
+    policy, _ = get_policy(rho, k, rng.local_numpy_rng)
     rotary_seq_len = rotary_seq_len or context_len * 10
-    broadcast_kwargs = dict(d=d, rho=0.5, height=height)
+    broadcast_kwargs = dict(d=d, height=height)
     model_kwargs = dict(sequence_len=context_len, vocab_size=vocab_size, rotary_seq_len=rotary_seq_len,
                         n_layers=layers, n_heads=heads, n_kv_heads=kv_heads, n_embd=model_dim)
     engine_kwargs = dict(num_samples=samples, max_tokens=max_tokens, temperature=temperature, top_k=top_k)
-    tokenizer = get_tokenizer(summary_mode, vocab_size)
+    tokenizer = get_tokenizer(summary_mode, vocab_size, policy)
     model_conf = NanochatConfig(**model_kwargs)
-    broadcast_conf = BroadcastConfig(**broadcast_kwargs)
+    tree_conf = PerfectTreeConfig(**broadcast_kwargs)
     with torch.device("meta"):
         model = Nanochat(model_conf)
     device = device_to_use()
@@ -213,7 +222,7 @@ def generate(d, height, context_len, vocab_size, layers, heads, kv_heads, model_
     model.eval()
     sampler = NanochatSampler(model, seed=rng.global_torch_rng(device))
     engine = get_engine(tokenizer, sampler)
-    prompt = make_prompt(tokenizer, broadcast_conf)
+    prompt = make_prompt(tokenizer, tree_conf)
     for tree in engine.generate_tree(prompt, **engine_kwargs):
         echo(tree)
 
@@ -231,11 +240,13 @@ def evaluate(d, rho, height, batch_height, samples, dist_type, seed):
     from matplotlib import pyplot as plt
 
     rng = RNGManager(seed=seed)
-    broadcast_conf = BroadcastConfig(d=d, rho=rho, height=height)
+    tree_conf = PerfectTreeConfig(d=d, height=height)
+    policy = IsingBroadcastPolicy(rho, seed=rng.local_numpy_rng)
     batch_height = batch_height or height
     # num_leaves = d ** height
-    tree_generator = get_tree_generator(dist_type, broadcast_conf, batch_height,
-                                        num_samples=samples, seed=rng.local_numpy_rng)
+    # tree_generator = get_tree_generator(dist_type, tree_conf, batch_height,
+    #                                     num_samples=samples, seed=rng.local_numpy_rng)
+    tree_generator = []
     echo(f"Evaluating with {samples} samples")
     echo(f"Distribution type: {dist_type}")
     x = np.zeros(samples)
@@ -272,22 +283,46 @@ def get_max_tokens(d, height):
     return max_tokens
 
 
+def evaluate_ising(engine, prompt, step, model, run, d, height, total_samples, batch_samples):
+    max_tokens = get_max_tokens(d, height)
+    actual_tokens = d ** height
+    model.eval()
+    sample_var, kurtosis = evaluate_moments(engine, prompt, total_samples, max_tokens,
+                                            batch_samples=batch_samples, actual_tokens_hint=actual_tokens)
+    model.train()
+    echo(f"Samples of scaled magnetization for height {height}: var {sample_var:.6f} and kurtosis {kurtosis:.6f}")
+    run.log({
+        "sample_variance": sample_var * actual_tokens,
+        "scaled_sample_variance": sample_var,
+        "sample_kurtosis": kurtosis,
+    }, step=step)
+
+
+def evaluate_coloring(engine, prompt, step, model, run, d, height, total_samples, batch_samples):
+    max_tokens = get_max_tokens(d, height)
+    config = PerfectTreeConfig(d=d, height=height)
+    model.eval()
+    stat = check_validity(engine, prompt, total_samples, max_tokens, config, batch_samples=batch_samples)
+    model.train()
+    echo("Reconstruction statistics")
+    echo(f"Unsatisfied: {stat['unsatisfied']}")
+    echo(f"Invalid: {stat['invalid']}")
+    echo(f"Constrained: {stat['constrained']}")
+    echo(f"Free: {stat['free']}")
+    valid_rate = (stat["constrained"] + stat["free"]) / total_samples
+    run.log({
+        "valid_rate": valid_rate,
+    }, step=step)
+
+
 def evaluate_model(evaluate_every, engine, prompt, step, num_iterations, model, run, ctx):
     if evaluate_every is not None and (step % evaluate_every == 0 or step == num_iterations):
         d, height, total_samples, batch_samples = (ctx["d"], ctx["eval_height"],
                                                    ctx["eval_samples"], ctx["sample_batch"])
-        max_tokens = get_max_tokens(d, height)
-        actual_tokens = d ** height
-        model.eval()
-        sample_var, kurtosis = evaluate_moments(engine, prompt, total_samples, max_tokens,
-                                                batch_samples=batch_samples, actual_tokens_hint=actual_tokens)
-        model.train()
-        echo(f"Samples of scaled magnetization for height {height}: var {sample_var:.6f} and kurtosis {kurtosis:.6f}")
-        run.log({
-            "sample_variance": sample_var * actual_tokens,
-            "scaled_sample_variance": sample_var,
-            "sample_kurtosis": kurtosis,
-        }, step=step)
+        if ctx["policy"] == "Ising":
+            evaluate_ising(engine, prompt, step, model, run, d, height, total_samples, batch_samples)
+        else:
+            evaluate_coloring(engine, prompt, step, model, run, d, height, total_samples, batch_samples)
 
 
 def histogram(hist_every, engine, prompt, step, num_iterations, model, run, ctx):
@@ -353,43 +388,44 @@ def timer_start(ctx, **_):
     ctx["timer_start"] = time.time()
 
 
-def make_prompt(tokenizer: SpinTreeTokenizer, config: BroadcastConfig):
+def make_prompt(tokenizer: BroadcastTreeTokenizer, config: PerfectTreeConfig):
     if isinstance(tokenizer, SummaryTokenizer):
         return tokenizer.init_summary_tokens(config)
     return [tokenizer.bos_token]
 
 
-def get_engine(tokenizer: SpinTreeTokenizer, sampler):
+def get_engine(tokenizer: BroadcastTreeTokenizer, sampler):
     if isinstance(tokenizer, SummaryTokenizer):
         return StatefulEngine(tokenizer, sampler)
     return SimpleEngine(tokenizer, sampler)
 
 
-def get_tokenizer(summary_mode, vocab_size):
+def get_policy(rho, k, rng):
+    if rho is not None:
+        return IsingBroadcastPolicy(rho, seed=rng), {
+            "policy": "Ising",
+            "rho": rho,
+        }
+    return ColoringBroadcastPolicy(k, seed=rng), {
+        "policy": "coloring",
+        "k": k,
+    }
+
+
+def get_tokenizer(summary_mode, vocab_size, policy):
     if summary_mode == "segment":
-        return SegmentSummaryTokenizer(vocab_size)
+        return SegmentSummaryTokenizer(vocab_size, policy)
     elif summary_mode == "path":
-        return HierarchySummaryTokenizer(vocab_size)
-    return SpinTreeTokenizer(vocab_size)
+        return HierarchySummaryTokenizer(vocab_size, policy)
+    return BroadcastTreeTokenizer(vocab_size, policy)
 
 
-def get_dataloader(dist_type, config: BroadcastConfig, device_batch_size, context_len, batch_height, tokenizer,
+def get_dataloader(config: PerfectTreeConfig, device_batch_size, context_len, batch_height, tokenizer,
                    data_mode="stream", summary=False, device="cpu", seed=None):
-    dataloader_kwargs = dict(config=config, batch_size=device_batch_size, seq_len=context_len,
-                             batch_height=batch_height, tokenizer=tokenizer, mode=data_mode, device=device,
+    dataloader_kwargs = dict(tokenizer=tokenizer, config=config, batch_size=device_batch_size, seq_len=context_len,
+                             batch_height=batch_height, mode=data_mode, device=device,
                              seed=seed)
-    if dist_type == "block":
-        return block_autoregressive_tree_data_loader(**dataloader_kwargs)
-    else:
-        return broadcast_tree_data_loader(**dataloader_kwargs, summary=summary)
-
-
-def get_tree_generator(dist_type, config: BroadcastConfig, batch_height, num_samples, seed=None):
-    if dist_type == "block":
-        yield from block_autoregressive_tree(config, batch_height, num_trees=num_samples, seed=seed)
-    else:
-        for _, tree, __ in dynamic_broadcast_tree(config, batch_height, num_trees=num_samples, seed=seed):
-            yield tree
+    return broadcast_tree_data_loader(**dataloader_kwargs, summary=summary)
 
 
 cli()

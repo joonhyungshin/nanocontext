@@ -1,10 +1,10 @@
 import torch
 
-from .tokenizer import SpinTreeTokenizer
+from .tokenizer import PerfectTreeTokenizer
 
 
 class Engine:
-    def __init__(self, tokenizer: SpinTreeTokenizer, sampler):
+    def __init__(self, tokenizer: PerfectTreeTokenizer, sampler):
         self.tokenizer = tokenizer
         self.sampler = sampler
 
@@ -19,14 +19,12 @@ class Engine:
     def generate_tree_tokens_tensor(self, prompt, max_tokens, num_samples=1, allow_many=False, **kwargs):
         raise NotImplementedError
 
-    def generate_tree_tokens(self, prompt, num_samples=1, max_tokens=None, **kwargs):
-        tokens_tensor = self.generate_tree_tokens_tensor(prompt,
-                                                         num_samples=num_samples, max_tokens=max_tokens, **kwargs)
-        return tokens_tensor.tolist()
+    def generate_tree_tokens(self, prompt, num_samples=1, max_tokens=None, **kwargs) -> list:
+        raise NotImplementedError
 
     def generate_tree(self, prompt, num_samples=1, max_tokens=None, **kwargs):
         tree_tokens = self.generate_tree_tokens(prompt, num_samples=num_samples, max_tokens=max_tokens, **kwargs)
-        trees = [next(self.tokenizer.decode_trees(tree_token)) for tree_token in tree_tokens]
+        trees = [next(self.tokenizer.decode_trees_stream(tree_token)) for tree_token in tree_tokens]
         return trees
 
 
@@ -91,7 +89,8 @@ class StatefulEngine(Engine):
             if all(completed):
                 break
             for i in range(num_samples):
-                for token in content_tokens[i]:
+                for token_raw in content_tokens[i]:
+                    token = token_raw.item()
                     if token == self.tokenizer.bos_token:
                         completed[i] = True
                         break

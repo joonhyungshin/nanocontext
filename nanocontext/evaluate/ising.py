@@ -3,8 +3,8 @@ import math
 import torch
 import torch.distributed as dist
 
-from .data.broadcast_tree import Engine
-from .utils import ddp_world_size
+from nanocontext.data.broadcast_tree import Engine
+from nanocontext.utils import ddp_world_size
 
 
 @torch.inference_mode()
@@ -17,8 +17,8 @@ def sample_magnets(engine: Engine, prompt, num_samples, max_tokens,
         actual_batch_samples = min(num_samples - i, batch_samples)
         tokens = engine.generate_tree_tokens_tensor(prompt, max_tokens,
                                                     num_samples=actual_batch_samples, allow_many=True)
-        magnet[i:i + actual_batch_samples] = (torch.sum(tokens == tokenizer.pos_token, dim=1) -
-                                              torch.sum(tokens == tokenizer.neg_token, dim=1))
+        magnet[i:i + actual_batch_samples] = (torch.sum(tokens == tokenizer.tokenize_value(1), dim=1) -
+                                              torch.sum(tokens == tokenizer.tokenize_value(-1), dim=1))
     return magnet
 
 
