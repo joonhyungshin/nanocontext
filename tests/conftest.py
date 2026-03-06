@@ -90,3 +90,10 @@ def coloring_data_loader(config, coloring_tokenizer):
 def ising_cpt_data_loader(config, ising_cpt_tokenizer):
     data_loader = broadcast_tree_data_loader(ising_cpt_tokenizer, config, 16, 64, summary=True)
     return data_loader
+
+
+@pytest.fixture
+def ising_cpt_sample_data_loader(config, ising_cpt_tokenizer):
+    data_loader = broadcast_tree_data_loader(ising_cpt_tokenizer, config, 16, 64,
+                                             mode="sample", summary=True)
+    return data_loader

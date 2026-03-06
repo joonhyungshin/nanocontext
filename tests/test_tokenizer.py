@@ -91,7 +91,7 @@ def test_ising_summary_tokenizer_stream(config, ising_seg_tokenizer, ising_cpt_t
     seg_stream = ising_seg_tokenizer.tokenized_trees_with_summaries_stream(config, 10,
                                                                            batch_height=5, token_start_idx=10)
     cpt_stream = ising_cpt_tokenizer.tokenized_trees_with_summaries_stream(config, 10,
-                                                                           batch_height=5, token_start_idx=20)
+                                                                           batch_height=4, token_start_idx=20)
     _, tokens, _ = next(seg_stream)
     assert len(tokens) == 0
     _, tokens, _ = next(cpt_stream)

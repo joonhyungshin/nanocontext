@@ -365,8 +365,10 @@ class HierarchySummaryTokenizer(SummaryTokenizer):
         if leaf_idx > 0:
             ancestors = tree.get_ancestors_of_leaf(leaf_idx - 1)
             node_idx = leaf_idx
-            for i in range(tree.height - 1, -1, -1):
-                summary_data[i] = (ancestors[i], node_idx % tree.d)
+            zero_cnt = d_order(leaf_idx, tree.d) if child_idx == 1 else 0
+            for i in range(tree.height):
+                ancestor_hint = ancestors[tree.height - 1 - i] if i >= zero_cnt else None
+                summary_data[tree.height - 1 - i] = (ancestor_hint, node_idx % tree.d)
                 node_idx //= tree.d
         return summary_data, ctx
 

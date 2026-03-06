@@ -36,7 +36,8 @@ def broadcast_tree_stream_data_loader(tokenizer: BroadcastTreeTokenizer, config:
 def broadcast_tree_sample_data_loader(tokenizer: BroadcastTreeTokenizer, config: PerfectTreeConfig, batch_size, seq_len,
                                       batch_height=None, summary=False, device="cpu", seed=None):
     rng = get_numpy_rng(seed, local=True)
-    num_tokens = tokenizer.num_tokens(config.d, config.height, prepend_bos=True)
+    d, height = config.d, config.height
+    num_tokens = (d ** (height - 1)) * (d + 1)
     if summary:
         if not isinstance(tokenizer, SummaryTokenizer):
             raise ValueError("tokenizer does not support summarizing")
