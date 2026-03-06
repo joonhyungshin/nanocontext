@@ -39,8 +39,10 @@ def get_root_constraint(tree: LinkedOrderedTree, domain: ValueDomain, config: Pe
     return get_color_constraint(tree.root, domain, config, 0)
 
 
-def check_validity(engine: Engine, prompt, num_samples, max_tokens, config: PerfectTreeConfig,
+def check_validity(engine: Engine, prompt, total_samples, max_tokens, config: PerfectTreeConfig,
                    batch_samples=None):
+    world_size = ddp_world_size()
+    num_samples = (total_samples + world_size - 1) // world_size
     batch_samples = batch_samples or num_samples
     tokenizer = engine.tokenizer
     stat_tensor = torch.zeros(4, device=engine.device, dtype=torch.int64)
@@ -58,7 +60,7 @@ def check_validity(engine: Engine, prompt, num_samples, max_tokens, config: Perf
                 stat_tensor[0] += 1
             except InvalidStructureException:
                 stat_tensor[1] += 1
-    if ddp_world_size() > 1:
+    if world_size > 1:
         dist.all_reduce(stat_tensor, op=dist.ReduceOp.SUM)
     stat = {
         "unsatisfied": stat_tensor[0],
