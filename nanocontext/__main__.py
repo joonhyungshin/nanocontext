@@ -32,7 +32,7 @@ def cli():
 @cli.command()
 @click.option("-d", help="number of children of a tree", default=3, type=int)
 @click.option("--rho", help="correlation for Ising experiment", type=float)
-@click.option("-k", help="number of colors for coloring experiment", type=int)
+@click.option("-k", "--colors", "k", help="number of colors for coloring experiment", type=int)
 @click.option("--height", help="height of a tree", type=int, required=True)
 @click.option("--device-batch-size", help="batch size per device", default=32, type=int)
 @click.option("--total-batch-size", help="total batch size in training", default=524288, type=int)
@@ -326,6 +326,9 @@ def evaluate_model(evaluate_every, engine, prompt, step, num_iterations, model, 
 
 
 def histogram(hist_every, engine, prompt, step, num_iterations, model, run, ctx):
+    if ctx["policy"] == "coloring":
+        # No histogram for coloring
+        return
     if hist_every is not None and (step % hist_every == 0 or step == num_iterations):
         d, height, total_samples, batch_samples = (ctx["d"], ctx["hist_height"],
                                                    ctx["hist_samples"], ctx["sample_batch"])
