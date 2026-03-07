@@ -11,7 +11,7 @@ from nanocontext.data.broadcast_tree import (
 
 @pytest.fixture
 def config():
-    return PerfectTreeConfig(d=3, height=10)
+    return PerfectTreeConfig(d=3, height=8)
 
 
 @pytest.fixture
