@@ -287,7 +287,7 @@ class SegmentSummaryTokenizer(SummaryTokenizer):
         if child_idx == 0 and leaf_idx > 0:
             for depth, idx in tree.segment_stream(0, leaf_idx - 1):
                 summary_data[depth - 1][1].append(tree.get_value_or_sample(depth, idx))
-            summary_data[tree.height - 1][1].append(tree.get_value_or_sample(tree.height - 1, leaf_idx - 1))
+            summary_data[tree.height - 1][1].append(tree.get_value_or_sample(tree.height, leaf_idx - 1))
         else:
             if leaf_idx == tree.num_leaves:
                 return summary_data, ctx
