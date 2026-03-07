@@ -364,12 +364,20 @@ class HierarchySummaryTokenizer(SummaryTokenizer):
         summary_data, ctx = self.init_summary(tree.config)
         if leaf_idx > 0:
             ancestors = tree.get_ancestors_of_leaf(leaf_idx - 1)
-            node_idx = leaf_idx
-            zero_cnt = d_order(leaf_idx, tree.d) if child_idx == 1 else 0
-            for i in range(tree.height):
-                ancestor_hint = ancestors[tree.height - 1 - i] if i >= zero_cnt else None
-                summary_data[tree.height - 1 - i] = (ancestor_hint, node_idx % tree.d)
-                node_idx //= tree.d
+            if child_idx == 0:
+                summary_data[-1] = (ancestors[-1], tree.d)
+                node_idx = (leaf_idx - 1) // tree.d
+                for i in range(1, tree.height):
+                    ancestor_hint = ancestors[tree.height - 1 - i]
+                    summary_data[tree.height - 1 - i] = (ancestor_hint, node_idx % tree.d)
+                    node_idx //= tree.d
+            else:
+                zero_cnt = d_order(leaf_idx, tree.d)
+                node_idx = leaf_idx
+                for i in range(tree.height):
+                    ancestor_hint = ancestors[tree.height - 1 - i] if i >= zero_cnt else None
+                    summary_data[tree.height - 1 - i] = (ancestor_hint, node_idx % tree.d)
+                    node_idx //= tree.d
         return summary_data, ctx
 
     def update_summary(self, summary, token_data, config: PerfectTreeConfig):
