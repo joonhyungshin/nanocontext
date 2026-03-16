@@ -79,14 +79,15 @@ def test_ising_cpt_start_from_middle_tokenizer(ising_lazy_tree, ising_cpt_tokeni
 
 def test_coloring_cpt_start_from_middle_tokenizer(coloring_lazy_tree, coloring_cpt_tokenizer):
     coloring_lazy_tree.get_subtree_or_sample(0, 0, keep_memory=True)
-    for i in range(20):
-        stream_one = coloring_cpt_tokenizer.tokenize_with_summary_stream(coloring_lazy_tree, [i],
+    for i in range(729):
+        stream_one = coloring_cpt_tokenizer.tokenize_with_summary_stream(coloring_lazy_tree, [i, i + 10],
                                                                          batch_height=6)
-        stream_two = coloring_cpt_tokenizer.tokenize_with_summary_stream(coloring_lazy_tree, [i],
-                                                                         batch_height=4,
+        stream_two = coloring_cpt_tokenizer.tokenize_with_summary_stream(coloring_lazy_tree, [i, i + 10],
+                                                                         batch_height=6,
                                                                          token_start_idx=i)
         for tok_sum_one, tok_sum_two in zip(stream_one, stream_two):
             assert tok_sum_one[1] == tok_sum_two[1]
+            assert len(tok_sum_two[0]) == 0 or tok_sum_two[0] == tok_sum_one[0]
 
 
 def test_ising_seg_start_from_last(ising_lazy_tree, ising_seg_tokenizer):

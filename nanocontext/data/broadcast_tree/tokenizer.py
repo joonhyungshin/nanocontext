@@ -246,7 +246,7 @@ class SummaryTokenizer(BroadcastTreeTokenizer):
                                                                      prepend_bos=not beginning):
                 tokens_window.extend(tokens)
                 if len(tokens_window) == 0 or len(tokens_window) >= summary_every:
-                    yield num_trees, tokens_window, summary
+                    yield num_trees, tokens_window.copy(), summary
                     tokens_window = []
             beginning = False
             num_trees += 1

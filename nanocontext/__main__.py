@@ -305,7 +305,9 @@ def evaluate_coloring(engine, prompt, step, model, run, d, height, total_samples
     stat = check_validity(engine, prompt, total_samples, max_tokens, config, batch_samples=batch_samples)
     model.train()
     echo("Reconstruction statistics")
-    echo(f"Unsatisfied: {stat['unsatisfied']}")
+    echo(f"Unsatisfied: {stat['unsatisfied']['total']}")
+    for depth in range(height):
+        echo(f"  At depth {depth}: {stat['unsatisfied']['details'][depth]}")
     echo(f"Invalid: {stat['invalid']}")
     echo(f"Constrained: {stat['constrained']}")
     echo(f"Free: {stat['free']}")

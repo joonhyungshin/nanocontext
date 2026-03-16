@@ -11,7 +11,7 @@ from nanocontext.data.broadcast_tree import (
 
 @pytest.fixture
 def config():
-    return PerfectTreeConfig(d=3, height=8)
+    return PerfectTreeConfig(d=3, height=6)
 
 
 @pytest.fixture
@@ -95,5 +95,12 @@ def ising_cpt_data_loader(config, ising_cpt_tokenizer):
 @pytest.fixture
 def ising_cpt_sample_data_loader(config, ising_cpt_tokenizer):
     data_loader = broadcast_tree_data_loader(ising_cpt_tokenizer, config, 16, 64,
+                                             mode="sample", summary=True)
+    return data_loader
+
+
+@pytest.fixture
+def coloring_cpt_sample_data_loader(config, coloring_cpt_tokenizer):
+    data_loader = broadcast_tree_data_loader(coloring_cpt_tokenizer, config, 16, 64,
                                              mode="sample", summary=True)
     return data_loader
