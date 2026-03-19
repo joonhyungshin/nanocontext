@@ -42,6 +42,7 @@ class NanochatSampler:
         with autocast():
             logits = self.model(x, kv_cache=kv_cache_prefill)
         kv_cache.prefill(kv_cache_prefill)
+        del kv_cache_prefill
         return logits
 
     @torch.inference_mode()
