@@ -13,12 +13,16 @@ def sample_magnets(engine: Engine, prompt, num_samples, max_tokens,
     batch_samples = batch_samples or num_samples
     magnet = torch.empty(num_samples, device=engine.device)
     tokenizer = engine.tokenizer
+    pos_token = tokenizer.tokenize_value(1)
+    neg_token = tokenizer.tokenize_value(-1)
     for i in range(0, num_samples, batch_samples):
         actual_batch_samples = min(num_samples - i, batch_samples)
-        tokens = engine.generate_tree_tokens_tensor(prompt, max_tokens,
-                                                    num_samples=actual_batch_samples, allow_many=True)
-        magnet[i:i + actual_batch_samples] = (torch.sum(tokens == tokenizer.tokenize_value(1), dim=1) -
-                                              torch.sum(tokens == tokenizer.tokenize_value(-1), dim=1))
+        for token_tensor in engine.generate_tree_tokens_tensor_stream(prompt,
+                                                                      max_tokens=max_tokens,
+                                                                      allow_many=True,
+                                                                      num_samples=actual_batch_samples):
+            spin_tensor = (token_tensor == pos_token).int() - (token_tensor == neg_token).int()
+            magnet[i:i + actual_batch_samples] += spin_tensor
     return magnet
 
 

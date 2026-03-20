@@ -16,6 +16,9 @@ class Engine:
     def device(self):
         return self.sampler.device
 
+    def generate_tree_tokens_tensor_stream(self, prompt, num_samples=1, max_tokens=None, allow_many=False, **kwargs):
+        raise NotImplementedError
+
     def generate_tree_tokens_tensor(self, prompt, max_tokens, num_samples=1, allow_many=False, **kwargs):
         raise NotImplementedError
 
@@ -29,6 +32,11 @@ class Engine:
 
 
 class SimpleEngine(Engine):
+    def generate_tree_tokens_tensor_stream(self, prompt, num_samples=1, allow_many=False, **kwargs):
+        end_token = None if allow_many else self.tokenizer.bos_token
+        yield from self.sampler.generate_tensor(prompt, num_samples=num_samples, end_token=end_token,
+                                                **kwargs)
+
     def generate_tree_tokens_tensor(self, prompt, max_tokens, num_samples=1, allow_many=False, **kwargs):
         end_token = None if allow_many else self.tokenizer.bos_token
         return self.sampler.generate_batch_tensor(prompt, max_tokens,
@@ -45,7 +53,7 @@ class StatefulEngine(Engine):
         content_len = self.sampler.context_len + 1 - 2 * summary_len
         return summary_len, content_len
 
-    def generate_tree_tokens_tensor_stream(self, prompt, num_samples=1, allow_many=False, max_states=None, **kwargs):
+    def generate_tokens_tensor_batch_stream(self, prompt, num_samples=1, allow_many=False, max_states=None, **kwargs):
         summary_len, content_len = self.get_summary_and_context_len(prompt)
         max_tokens = content_len + summary_len
         end_token = None if allow_many else self.tokenizer.bos_token
@@ -65,15 +73,30 @@ class StatefulEngine(Engine):
             prompt = tokens_tensor[:, max_tokens:]
             beginning = False
 
+    def generate_tree_tokens_tensor_stream(self, prompt, num_samples=1, max_tokens=None, allow_many=False, **kwargs):
+        summary_len, content_len = self.get_summary_and_context_len(prompt)
+        max_states = (max_tokens + content_len - 1) // content_len
+        num_tokens = 0
+        for tokens_tensor in self.generate_tokens_tensor_batch_stream(prompt,
+                                                                      num_samples=num_samples,
+                                                                      max_states=max_states,
+                                                                      allow_many=allow_many, **kwargs):
+            _, num_batch_tokens = tokens_tensor.shape
+            for i in range(num_batch_tokens):
+                yield tokens_tensor[:, i]
+                num_tokens += 1
+                if max_tokens is not None and num_tokens >= max_tokens:
+                    break
+
     def generate_tree_tokens_tensor(self, prompt, max_tokens, num_samples=1, allow_many=False, **kwargs):
         summary_len, content_len = self.get_summary_and_context_len(prompt)
         result = torch.full((num_samples, max_tokens), self.tokenizer.bos_token,
                             dtype=torch.long, device=self.device)
         max_states = (max_tokens + content_len - 1) // content_len
         num_tokens = 0
-        for tokens_tensor in self.generate_tree_tokens_tensor_stream(prompt, num_samples=num_samples,
-                                                                     allow_many=allow_many, max_states=max_states,
-                                                                     **kwargs):
+        for tokens_tensor in self.generate_tokens_tensor_batch_stream(prompt, num_samples=num_samples,
+                                                                      allow_many=allow_many, max_states=max_states,
+                                                                      **kwargs):
             _, token_len = tokens_tensor.shape
             actual_token_len = min(token_len, max_tokens - num_tokens)
             result[:, num_tokens:num_tokens + actual_token_len] = tokens_tensor[:, :actual_token_len]
@@ -85,7 +108,7 @@ class StatefulEngine(Engine):
     def generate_tree_tokens(self, prompt, num_samples=1, max_tokens=None, **kwargs):
         tree_tokens = [[] for _ in range(num_samples)]
         completed = [False for _ in range(num_samples)]
-        for content_tokens in self.generate_tree_tokens_tensor_stream(prompt, num_samples=num_samples, **kwargs):
+        for content_tokens in self.generate_tokens_tensor_batch_stream(prompt, num_samples=num_samples, **kwargs):
             if all(completed):
                 break
             for i in range(num_samples):
