@@ -58,7 +58,9 @@ class NanochatSampler:
             token_len = len(tokens)
             if not always_start:
                 completed = [tokens[-1] == end_token] * num_samples
-        kv_length_hint = (token_len + max_tokens) if max_tokens is not None else self.model.config.sequence_len
+        kv_length_hint = self.model.config.sequence_len
+        if max_tokens is not None and token_len + max_tokens < kv_length_hint:
+            kv_length_hint = token_len + max_tokens
         kv_cache = KVCache(
             batch_size=num_samples, seq_len=kv_length_hint,
             n_heads=self.model.config.n_heads,
