@@ -1,12 +1,12 @@
 """
 Adapted from nanochat.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 import torch
 import torch.nn.functional as F
 from torch import nn
-from nanocontext.utils import rms_norm
+from nanocontext.utils import rms_norm, device_to_use
 
 from .attention import CausalSelfAttention
 
@@ -65,6 +65,25 @@ class Nanochat(nn.Module):
         self.register_buffer("rotary_embd_sin",
                              torch.empty(rotary_emb_shape, dtype=torch.bfloat16), persistent=False)
         self._precompute_rotary_embd()
+
+    def save_model(self, filename):
+        checkpoint = {
+            "config": asdict(self.config),
+            "state_dict": self.state_dict(),
+        }
+        torch.save(checkpoint, filename)
+
+    @classmethod
+    def load_model(cls, filename, device=None):
+        device = device or device_to_use()
+        checkpoint = torch.load(filename, map_location=device)
+        with torch.device("meta"):
+            config = NanochatConfig(**checkpoint["config"])
+            model = cls(config)
+        model.to_empty(device=device)
+        model.load_state_dict(checkpoint["state_dict"], strict=True, assign=True)
+        model.preprocess()
+        return model
 
     def _precompute_rotary_embd(self):
         device = self.transformer.wte.weight.device

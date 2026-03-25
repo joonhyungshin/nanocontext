@@ -1,10 +1,18 @@
+from dataclasses import asdict
+
 import torch
 
-from .tokenizer import PerfectTreeTokenizer
+from nanocontext.sample import NanochatSampler
+from nanocontext.utils import device_to_use
+from nanocontext.models.nanochat import NanochatConfig, Nanochat
+from nanocontext.tree.coloring import ColoringDomain
+from nanocontext.tree.ising import IsingDomain
+
+from .tokenizer import PerfectTreeTokenizer, SegmentSummaryTokenizer, PathSummaryTokenizer
 
 
 class Engine:
-    def __init__(self, tokenizer: PerfectTreeTokenizer, sampler):
+    def __init__(self, tokenizer: PerfectTreeTokenizer, sampler: NanochatSampler):
         self.tokenizer = tokenizer
         self.sampler = sampler
 
@@ -122,3 +130,81 @@ class StatefulEngine(Engine):
                         break
                     tree_tokens[i].append(token)
         return tree_tokens
+
+
+def save_engine(engine: Engine, filename):
+    tokenizer = engine.tokenizer
+    domain = tokenizer.domain
+    model = engine.model
+    context_len = engine.sampler.context_len
+    if isinstance(engine, SimpleEngine):
+        summary = "disabled"
+    elif isinstance(tokenizer, SegmentSummaryTokenizer):
+        summary = "segment"
+    elif isinstance(tokenizer, PathSummaryTokenizer):
+        summary = "path"
+    else:
+        raise ValueError("cannot save engine: unknown engine type")
+    if isinstance(domain, IsingDomain):
+        domain = {
+            "type": "ising"
+        }
+    elif isinstance(domain, ColoringDomain):
+        domain = {
+            "type": "coloring",
+            "k": domain.k,
+        }
+    else:
+        raise ValueError("cannot save engine: unknown domain")
+    state_dict = {
+        "summary": summary,
+        "max_vocab_size": tokenizer.max_vocab_size,
+        "context_len": context_len,
+        "domain": domain,
+        "model": {
+            "type": "nanochat",
+            "config": asdict(model.config),
+            "parameters": model.state_dict()
+        }
+    }
+    torch.save(state_dict, filename)
+
+
+def load_engine(filename, device=None, seed=None):
+    device = device or device_to_use()
+    state_dict = torch.load(filename, map_location=device)
+    context_len = state_dict["context_len"]
+    summary = state_dict["summary"]
+    domain_dict = state_dict["domain"]
+    max_vocab_size = state_dict["max_vocab_size"]
+    model_state_dict = state_dict["model"]
+    model_type = model_state_dict["type"]
+    model_config = model_state_dict["config"]
+    if domain_dict["type"] == "ising":
+        domain = IsingDomain()
+    elif domain_dict["type"] == "coloring":
+        domain = ColoringDomain(domain_dict["k"])
+    else:
+        raise ValueError("unknown domain")
+    if summary == "disabled":
+        tokenizer = PerfectTreeTokenizer(max_vocab_size, domain)
+        engine_class = SimpleEngine
+    elif summary == "segment":
+        tokenizer = SegmentSummaryTokenizer(max_vocab_size, domain)
+        engine_class = StatefulEngine
+    elif summary == "path":
+        tokenizer = PathSummaryTokenizer(max_vocab_size, domain)
+        engine_class = StatefulEngine
+    else:
+        raise ValueError("unknown summary type")
+    if model_type != "nanochat":
+        raise ValueError("unknown model type")
+    with torch.device("meta"):
+        config = NanochatConfig(**model_config)
+        model = Nanochat(config)
+    model.to_empty(device=device)
+    model.load_state_dict(model_state_dict["parameters"], strict=True, assign=True)
+    model.preprocess()
+    sampler = NanochatSampler(model, context_len, seed=seed)
+    engine = engine_class(tokenizer, sampler)
+    return engine

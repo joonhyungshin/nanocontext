@@ -1,10 +1,8 @@
 from nanocontext.data.common import BaseTokenizer
 from nanocontext.utils import d_order, d_divide
 from nanocontext.tree import (
-    AbstractPerfectTree, LazyBroadcastTree, BroadcastPolicy, LinkedOrderedTree, PerfectTreeConfig, ValueDomain
+    AbstractPerfectTree, LazyBroadcastTree, LinkedOrderedTree, PerfectTreeConfig, ValueDomain
 )
-
-from .tree import block_autoregressive_tree
 
 
 class PerfectTreeTokenizer(BaseTokenizer):
@@ -110,44 +108,8 @@ class PerfectTreeTokenizer(BaseTokenizer):
     def decode_trees(self, tokens):
         return list(self.decode_trees_stream(tokens))
 
-    def num_tokens(self, d, height, prepend_bos=False):
-        return d ** height + d ** (height - 1) + (1 if prepend_bos else 0)
 
-
-class BroadcastTreeTokenizer(PerfectTreeTokenizer):
-    def __init__(self, max_vocab_size, policy: BroadcastPolicy):
-        super().__init__(max_vocab_size, policy.get_domain())
-        self.policy = policy
-
-    def tokenized_trees_stream(self, config: PerfectTreeConfig, token_start_idx=0, batch_height=None):
-        beginning = True
-        while True:
-            tree = LazyBroadcastTree(config, self.policy)
-            token_stream = self.tokenize_lazy_stream(tree, token_start_idx=token_start_idx,
-                                                     batch_height=batch_height, prepend_bos=True)
-            for token, _, __ in token_stream:
-                yield token
-            if beginning:
-                beginning = False
-                token_start_idx = 0
-
-    def tokenized_markov_subtrees_stream(self, config: PerfectTreeConfig, batch_height=None):
-        while True:
-            tree_sequence = block_autoregressive_tree(config, self.policy, batch_height=batch_height)
-            leaf_idx = 0
-            for tree in tree_sequence:
-                tokens = []
-                if leaf_idx == 0:
-                    tokens.append(self.bos_token)
-                else:
-                    zero_cnt = d_order(leaf_idx, config.d)
-                    tokens.append(self.punctuation(zero_cnt))
-                leaf_idx += tree.num_leaves
-                tokens.extend(self.tokenize(tree))
-                yield tokens
-
-
-class SummaryTokenizer(BroadcastTreeTokenizer):
+class SummaryTokenizer(PerfectTreeTokenizer):
     SUMMARY_PUNC_TOKEN_NAME = "summary_punc"
     SUMMARY_VAL_TOKEN_NAME = "summary_val"
 
@@ -155,7 +117,7 @@ class SummaryTokenizer(BroadcastTreeTokenizer):
     summary_start_token = 1
     summary_end_token = 2
     variable_token_base = 3
-    variable_tokens = BroadcastTreeTokenizer.variable_tokens + [
+    variable_tokens = PerfectTreeTokenizer.variable_tokens + [
         SUMMARY_PUNC_TOKEN_NAME,
         SUMMARY_VAL_TOKEN_NAME,
     ]
@@ -223,33 +185,6 @@ class SummaryTokenizer(BroadcastTreeTokenizer):
 
     def init_summary_tokens(self, config: PerfectTreeConfig):
         return self.tokenize_summary(self.init_summary(config), config)
-
-    def tokenized_trees_with_summaries_stream(self, config: PerfectTreeConfig, summary_every,
-                                              batch_height=None, token_start_idx=0):
-        tokens_window = []
-        beginning = True
-        num_trees = 0
-        num_tokens = (config.d ** (config.height - 1)) * (config.d + 1)
-        token_start_idx %= num_tokens
-        while True:
-            tree = LazyBroadcastTree(config, self.policy)
-            if beginning:
-                summary_indices = range(token_start_idx, num_tokens, summary_every)
-                local_start_idx = token_start_idx
-            else:
-                new_start_idx = summary_every - len(tokens_window)
-                summary_indices = range(new_start_idx, num_tokens, summary_every)
-                local_start_idx = 0
-            for tokens, summary in self.tokenize_with_summary_stream(tree, summary_indices,
-                                                                     token_start_idx=local_start_idx,
-                                                                     batch_height=batch_height,
-                                                                     prepend_bos=not beginning):
-                tokens_window.extend(tokens)
-                if len(tokens_window) == 0 or len(tokens_window) >= summary_every:
-                    yield num_trees, tokens_window.copy(), summary
-                    tokens_window = []
-            beginning = False
-            num_trees += 1
 
 
 class SegmentSummaryTokenizer(SummaryTokenizer):
@@ -328,7 +263,7 @@ class SegmentSummaryTokenizer(SummaryTokenizer):
         return summary_data, ctx
 
 
-class HierarchySummaryTokenizer(SummaryTokenizer):
+class PathSummaryTokenizer(SummaryTokenizer):
     bos_token = 0
     summary_start_token = 1
     summary_end_token = 2
