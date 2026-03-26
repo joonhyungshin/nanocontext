@@ -1,7 +1,7 @@
 from nanocontext.data.common import BaseTokenizer
 from nanocontext.utils import d_order, d_divide
 from nanocontext.tree import (
-    AbstractPerfectTree, LazyBroadcastTree, LinkedOrderedTree, PerfectTreeConfig, ValueDomain
+    AbstractPerfectTree, LazyBroadcastTree, LinkedOrderedTree, PerfectTreeConfig, ValueDomain, ColoringBroadcastPolicy
 )
 
 
@@ -59,7 +59,8 @@ class PerfectTreeTokenizer(BaseTokenizer):
     def tokenize(self, tree: AbstractPerfectTree, token_start_idx=0, prepend_bos=False):
         return list(self.tokenize_stream(tree, token_start_idx=token_start_idx, prepend_bos=prepend_bos))
 
-    def tokenize_lazy_stream(self, tree: LazyBroadcastTree, batch_height=None, token_start_idx=0, prepend_bos=False):
+    def tokenize_lazy_stream(self, tree: LazyBroadcastTree, batch_height=None, token_start_idx=0,
+                             prepend_bos=False):
         if not prepend_bos:
             token_start_idx += 1
         parent_idx, child_idx = divmod(token_start_idx, tree.d + 1)
@@ -71,9 +72,9 @@ class PerfectTreeTokenizer(BaseTokenizer):
                 if check_punc:
                     punc_token = self._get_punc_token(tree, leaf_idx)
                     if punc_token is not None:
-                        yield punc_token, subtree, (top_ancestors + ancestors).copy()
+                        yield punc_token, subtree, top_ancestors + ancestors
                 for token in self.tokenize_stream(subtree, prepend_bos=False):
-                    yield token, subtree, (top_ancestors + ancestors).copy()
+                    yield token, subtree, top_ancestors + ancestors
                 leaf_idx += subtree.num_leaves
                 check_punc = True
 
@@ -161,7 +162,7 @@ class SummaryTokenizer(PerfectTreeTokenizer):
         summary = self.init_summary(tree.config)
         if not prepend_bos:
             token_start_idx += 1
-        token_stream = self.tokenize_lazy_stream(tree, batch_height=batch_height, prepend_bos=False)
+        token_stream = self.tokenize_lazy_stream(tree, batch_height=batch_height, prepend_bos=True)
         for _ in range(token_start_idx):
             token_data = next(token_stream)
             summary = self.update_summary(summary, token_data, tree.config)
@@ -175,13 +176,32 @@ class SummaryTokenizer(PerfectTreeTokenizer):
         token_stream = self.tokenize_lazy_stream(tree, token_start_idx=token_start_idx,
                                                  batch_height=batch_height, prepend_bos=prepend_bos)
         for idx, token_data in enumerate(token_stream):
+            if isinstance(tree.policy, ColoringBroadcastPolicy) and summary[0][-1][0] is not None:
+                assert summary[0][-1][0] * 5 + 5 != token_data[0]
             token_idx = token_start_idx + idx
             if token_idx in summary_indices:
-                yield tokens.copy(), self.tokenize_summary(summary, tree.config)
-                tokens.clear()
+                yield tokens, self.tokenize_summary(summary, tree.config)
+                tokens = []
             tokens.append(token_data[0])
             summary = self.update_summary(summary, token_data, tree.config)
         yield tokens, self.tokenize_summary(summary, tree.config)
+
+    # def tokenize_with_summary_stream(self, tree: LazyBroadcastTree, summary_indices, token_start_idx=0,
+    #                                  batch_height=None, prepend_bos=False):
+    #     summary = self.init_summary(tree.config)
+    #     tokens = []
+    #     token_stream = self.tokenize_lazy_stream(tree, batch_height=batch_height, prepend_bos=True)
+    #     idx_patch = 0 if prepend_bos else 1
+    #     for idx, token_data in enumerate(token_stream):
+    #         if idx - idx_patch >= token_start_idx:
+    #             if isinstance(tree.policy, ColoringBroadcastPolicy) and summary[0][-1][0] is not None:
+    #                 assert summary[0][-1][0] * 5 + 5 != token_data[0]
+    #             if idx - idx_patch in summary_indices:
+    #                 yield tokens, self.tokenize_summary(summary, tree.config)
+    #                 tokens = []
+    #             tokens.append(token_data[0])
+    #         summary = self.update_summary(summary, token_data, tree.config)
+    #     yield tokens, self.tokenize_summary(summary, tree.config)
 
     def init_summary_tokens(self, config: PerfectTreeConfig):
         return self.tokenize_summary(self.init_summary(config), config)

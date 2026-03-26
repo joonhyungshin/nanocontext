@@ -223,8 +223,9 @@ class LazyBroadcastTree(AbstractPerfectTree):
                     cur_value = ancestors[i - 1]
                     ancestors[i] = self.policy.broadcast(cur_value).item()
                 cur_value = ancestors[-1]
-            batch_tree = self.broadcast_subtree(batch_height, cur_value)
-            self.sampled_values[depth][idx] = ancestors[0] if ancestors else batch_tree.get_root_value()
+            subtree_root_value = self.policy.broadcast(cur_value).item()
+            batch_tree = self.broadcast_subtree(batch_height, root_value=subtree_root_value)
+            self.sampled_values[depth][idx] = ancestors[0] if ancestors else subtree_root_value
             yield batch_tree, ancestors.copy()
 
     def sample_segment_stream(self, start, end, batch_height=None):

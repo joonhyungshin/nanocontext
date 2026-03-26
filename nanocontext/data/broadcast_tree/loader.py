@@ -1,5 +1,5 @@
 from nanocontext.data.common import tokens_to_data
-from nanocontext.tree import BroadcastPolicy, LazyBroadcastTree
+from nanocontext.tree import BroadcastPolicy, LazyBroadcastTree, ColoringBroadcastPolicy
 from nanocontext.utils import get_numpy_rng, uniform_slices_from_concatenation, d_order
 
 from .tree import PerfectTreeConfig, block_autoregressive_tree
@@ -64,7 +64,7 @@ class BroadcastTreeStreamer:
                                                                                prepend_bos=not beginning):
                 tokens_window.extend(tokens)
                 if len(tokens_window) == 0 or len(tokens_window) >= summary_every:
-                    yield num_trees, tokens_window.copy(), summary
+                    yield num_trees, tokens_window, summary
                     tokens_window = []
             beginning = False
             num_trees += 1

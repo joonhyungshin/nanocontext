@@ -120,8 +120,8 @@ def coloring_data_loader(config, coloring_policy, coloring_tokenizer):
 
 
 @pytest.fixture
-def ising_cpt_data_loader(config, coloring_policy, ising_cpt_tokenizer):
-    data_loader = broadcast_tree_data_loader(ising_cpt_tokenizer, config, coloring_policy,
+def ising_cpt_data_loader(config, ising_policy, ising_cpt_tokenizer):
+    data_loader = broadcast_tree_data_loader(ising_cpt_tokenizer, config, ising_policy,
                                              16, 64, summary=True)
     return data_loader
 
@@ -137,4 +137,11 @@ def ising_cpt_sample_data_loader(config, ising_policy, ising_cpt_tokenizer):
 def coloring_cpt_sample_data_loader(config, coloring_policy, coloring_cpt_tokenizer):
     data_loader = broadcast_tree_data_loader(coloring_cpt_tokenizer, config, coloring_policy,
                                              16, 64, mode="sample", summary=True)
+    return data_loader
+
+
+@pytest.fixture
+def coloring_cpt_stream_data_loader(config, coloring_policy, coloring_cpt_tokenizer):
+    data_loader = broadcast_tree_data_loader(coloring_cpt_tokenizer, config, coloring_policy,
+                                             16, 64, mode="stream", summary=True)
     return data_loader
