@@ -186,23 +186,6 @@ class SummaryTokenizer(PerfectTreeTokenizer):
             summary = self.update_summary(summary, token_data, tree.config)
         yield tokens, self.tokenize_summary(summary, tree.config)
 
-    # def tokenize_with_summary_stream(self, tree: LazyBroadcastTree, summary_indices, token_start_idx=0,
-    #                                  batch_height=None, prepend_bos=False):
-    #     summary = self.init_summary(tree.config)
-    #     tokens = []
-    #     token_stream = self.tokenize_lazy_stream(tree, batch_height=batch_height, prepend_bos=True)
-    #     idx_patch = 0 if prepend_bos else 1
-    #     for idx, token_data in enumerate(token_stream):
-    #         if idx - idx_patch >= token_start_idx:
-    #             if isinstance(tree.policy, ColoringBroadcastPolicy) and summary[0][-1][0] is not None:
-    #                 assert summary[0][-1][0] * 5 + 5 != token_data[0]
-    #             if idx - idx_patch in summary_indices:
-    #                 yield tokens, self.tokenize_summary(summary, tree.config)
-    #                 tokens = []
-    #             tokens.append(token_data[0])
-    #         summary = self.update_summary(summary, token_data, tree.config)
-    #     yield tokens, self.tokenize_summary(summary, tree.config)
-
     def init_summary_tokens(self, config: PerfectTreeConfig):
         return self.tokenize_summary(self.init_summary(config), config)
 
