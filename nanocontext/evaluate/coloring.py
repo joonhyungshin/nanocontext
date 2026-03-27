@@ -42,7 +42,7 @@ def get_root_constraint(tree: LinkedOrderedTree, domain: ValueDomain, config: Pe
 
 
 def check_validity(engine: Engine, prompt, total_samples, max_tokens, config: PerfectTreeConfig,
-                   batch_samples=None):
+                   batch_samples=None, patch=False):
     world_size = ddp_world_size()
     num_samples = (total_samples + world_size - 1) // world_size
     batch_samples = batch_samples or num_samples
@@ -51,7 +51,11 @@ def check_validity(engine: Engine, prompt, total_samples, max_tokens, config: Pe
     unsat_tensor = torch.zeros(config.height, device=engine.device, dtype=torch.int64)
     for i in range(0, num_samples, batch_samples):
         actual_batch_samples = min(num_samples - i, batch_samples)
-        trees = engine.generate_tree(prompt, num_samples=actual_batch_samples, max_tokens=max_tokens)
+        if patch:
+            trees = engine.generate_patched_tree(prompt, config,
+                                                 num_samples=actual_batch_samples, max_tokens=max_tokens)
+        else:
+            trees = engine.generate_tree(prompt, num_samples=actual_batch_samples, max_tokens=max_tokens)
         for tree in trees:
             try:
                 constraint = get_root_constraint(tree, tokenizer.domain, config)

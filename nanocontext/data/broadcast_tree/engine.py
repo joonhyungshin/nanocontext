@@ -3,12 +3,13 @@ from dataclasses import asdict
 import torch
 
 from nanocontext.sample import NanochatSampler
-from nanocontext.utils import device_to_use
+from nanocontext.utils import device_to_use, d_order
 from nanocontext.models.nanochat import NanochatConfig, Nanochat
 from nanocontext.tree.coloring import ColoringDomain
 from nanocontext.tree.ising import IsingDomain
 
 from .tokenizer import PerfectTreeTokenizer, SegmentSummaryTokenizer, PathSummaryTokenizer
+from ...tree import PerfectTreeConfig
 
 
 class Engine:
@@ -36,6 +37,25 @@ class Engine:
     def generate_tree(self, prompt, num_samples=1, max_tokens=None, **kwargs):
         tree_tokens = self.generate_tree_tokens(prompt, num_samples=num_samples, max_tokens=max_tokens, **kwargs)
         trees = [next(self.tokenizer.decode_trees_stream(tree_token)) for tree_token in tree_tokens]
+        return trees
+
+    def patch_tree_token(self, tree_token, tree_config: PerfectTreeConfig):
+        d, height = tree_config.d, tree_config.height
+        bos_fix = 0 if tree_token[0] == self.tokenizer.bos_token else 1
+        for idx in range(1, d ** height):
+            zero_cnt = d_order(idx, d) + 1
+            punc_idx = idx * (d + 1) - bos_fix
+            if len(tree_token) > punc_idx:
+                tree_token[punc_idx] = self.tokenizer.punctuation(zero_cnt)
+            else:
+                break
+
+    def generate_patched_tree(self, prompt, tree_config: PerfectTreeConfig, num_samples=1, max_tokens=None, **kwargs):
+        tree_tokens = self.generate_tree_tokens(prompt, num_samples=num_samples, max_tokens=max_tokens, **kwargs)
+        trees = []
+        for tree_token in tree_tokens:
+            self.patch_tree_token(tree_token, tree_config)
+            trees.append(next(self.tokenizer.decode_trees_stream(tree_token)))
         return trees
 
 

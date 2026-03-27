@@ -271,18 +271,30 @@ def evaluate_coloring(engine, prompt, step, model, run, d, height, total_samples
     max_tokens = get_max_tokens(d, height)
     config = PerfectTreeConfig(d=d, height=height)
     model.eval()
-    stat = check_validity(engine, prompt, total_samples, max_tokens, config, batch_samples=batch_samples)
+
+    def display_recon_stat(stat):
+        echo(f"Unsatisfied: {stat['unsatisfied']['total']}")
+        for depth in range(height):
+            echo(f"  At depth {depth}: {stat['unsatisfied']['details'][depth]}")
+        echo(f"Invalid: {stat['invalid']}")
+        echo(f"Constrained: {stat['constrained']}")
+        echo(f"Free: {stat['free']}")
+
+    checker_kwargs = dict(engine=engine, prompt=prompt, total_samples=total_samples, max_tokens=max_tokens,
+                          config=config, batch_samples=batch_samples)
+    plain_stat = check_validity(**checker_kwargs)
+    patched_stat = check_validity(**checker_kwargs, patch=True)
     model.train()
-    echo("Reconstruction statistics")
-    echo(f"Unsatisfied: {stat['unsatisfied']['total']}")
-    for depth in range(height):
-        echo(f"  At depth {depth}: {stat['unsatisfied']['details'][depth]}")
-    echo(f"Invalid: {stat['invalid']}")
-    echo(f"Constrained: {stat['constrained']}")
-    echo(f"Free: {stat['free']}")
-    valid_rate = (stat["constrained"] + stat["free"]) / total_samples
+    echo("Reconstruction statistics (plain)")
+    display_recon_stat(plain_stat)
+    echo("Reconstruction statistics (patched)")
+    display_recon_stat(patched_stat)
+
+    valid_rate = (plain_stat["constrained"] + plain_stat["free"]) / total_samples
+    patched_valid_rate = (patched_stat["constrained"] + patched_stat["free"]) / total_samples
     run.log({
         "valid_rate": valid_rate,
+        "patched_valid_rate": patched_valid_rate,
     }, step=step)
 
 
