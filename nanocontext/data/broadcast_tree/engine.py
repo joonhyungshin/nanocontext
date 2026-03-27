@@ -49,6 +49,9 @@ class Engine:
                 tree_token[punc_idx] = self.tokenizer.punctuation(zero_cnt)
             else:
                 break
+        end_idx = (d ** height) * (d + 1) - bos_fix
+        if len(tree_token) > end_idx:
+            tree_token[end_idx] = self.tokenizer.bos_token
 
     def generate_patched_tree(self, prompt, tree_config: PerfectTreeConfig, num_samples=1, max_tokens=None, **kwargs):
         tree_tokens = self.generate_tree_tokens(prompt, num_samples=num_samples, max_tokens=max_tokens, **kwargs)
