@@ -157,7 +157,7 @@ def train(d, rho, k, height, device_batch_size, total_batch_size,
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
                                       sample_validate,
                                       sample_every, sample_max_tokens, engine, prompt,
-                                      num_iterations=num_iterations)
+                                      num_iterations=num_iterations, ctx=ctx)
             trainer.register_callback(TrainerSignal.PRE_OPTIM_STEP,
                                       evaluate_model,
                                       eval_every, engine, prompt,
@@ -248,10 +248,7 @@ echo = main_process(click.echo)
 
 
 def get_max_tokens(d, height):
-    max_tokens = d
-    for _ in range(height - 1):
-        max_tokens = d * max_tokens + d - 1
-    return max_tokens
+    return (d ** (height - 1)) * (d + 1)
 
 
 def evaluate_ising(engine, prompt, step, model, run, d, height, total_samples, batch_samples):
@@ -330,10 +327,19 @@ def histogram(hist_every, engine, prompt, step, num_iterations, model, run, ctx)
 
 
 @main_process
-def sample_validate(sample_every, sample_max_tokens, engine, prompt, step, num_iterations, model):
+def sample_validate(sample_every, sample_max_tokens, engine, prompt, step, num_iterations, model, ctx):
     if sample_every is not None and (step % sample_every == 0 or step == num_iterations):
         model.eval()
+        echo("Plain sample:")
         tree = engine.generate_tree(prompt, sample_max_tokens)[0]
+        if tree.is_singleton():
+            echo("(empty)")
+        else:
+            echo(tree)
+        d, height = ctx["d"], ctx["eval_height"]
+        echo(f"Patched sample (d={d}, h={height}):")
+        tree_config = PerfectTreeConfig(d=d, height=height)
+        tree = engine.generate_patched_tree(prompt, sample_max_tokens, tree_config)[0]
         if tree.is_singleton():
             echo("(empty)")
         else:
