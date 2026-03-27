@@ -89,9 +89,11 @@ def train(d, rho, k, height, device_batch_size, total_batch_size,
         raise ValueError("exactly one of k (coloring) or rho (Ising) must be given")
     rng = RNGManager(seed=seed)
     echo(f"training with seed: {rng.seed}")
-    eval_height = eval_height or height
     batch_height = batch_height or height
+    eval_height = eval_height or height
     hist_height = hist_height or eval_height
+    eval_height = min(eval_height, height)
+    hist_height = min(hist_height, height)
     hist_samples = hist_samples or eval_samples
     heads, kv_heads, model_dim = model_hyperparams_from_layers(layers, heads, kv_heads, model_dim)
     rotary_seq_len = rotary_seq_len or context_len * 10
@@ -189,13 +191,13 @@ def generate(d, height,
     rng = RNGManager(seed=seed)
     echo(f"generating with seed: {rng.seed}")
     tree_kwargs = dict(d=d, height=height)
-    engine_kwargs = dict(num_samples=samples, max_tokens=max_tokens, temperature=temperature, top_k=top_k)
+    engine_kwargs = dict(num_samples=samples, temperature=temperature, top_k=top_k)
     tree_conf = PerfectTreeConfig(**tree_kwargs)
     device = device_to_use()
     engine = load_engine(model_path, device, seed=rng.global_torch_rng(device))
     engine.model.eval()
     prompt = make_prompt(engine.tokenizer, tree_conf)
-    for tree in engine.generate_tree(prompt, **engine_kwargs):
+    for tree in engine.generate_tree(prompt, max_tokens, **engine_kwargs):
         echo(tree)
 
 
@@ -331,7 +333,7 @@ def histogram(hist_every, engine, prompt, step, num_iterations, model, run, ctx)
 def sample_validate(sample_every, sample_max_tokens, engine, prompt, step, num_iterations, model):
     if sample_every is not None and (step % sample_every == 0 or step == num_iterations):
         model.eval()
-        tree = engine.generate_tree(prompt, max_tokens=sample_max_tokens)[0]
+        tree = engine.generate_tree(prompt, sample_max_tokens)[0]
         if tree.is_singleton():
             echo("(empty)")
         else:

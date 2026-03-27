@@ -31,30 +31,30 @@ class Engine:
     def generate_tree_tokens_tensor(self, prompt, max_tokens, num_samples=1, allow_many=False, **kwargs):
         raise NotImplementedError
 
-    def generate_tree_tokens(self, prompt, num_samples=1, max_tokens=None, **kwargs) -> list:
+    def generate_tree_tokens(self, prompt, max_tokens, num_samples=1, allow_many=False, **kwargs) -> list:
         raise NotImplementedError
 
-    def generate_tree(self, prompt, num_samples=1, max_tokens=None, **kwargs):
-        tree_tokens = self.generate_tree_tokens(prompt, num_samples=num_samples, max_tokens=max_tokens, **kwargs)
+    def generate_tree(self, prompt, max_tokens, num_samples=1, **kwargs):
+        tree_tokens = self.generate_tree_tokens(prompt, max_tokens, num_samples=num_samples, **kwargs)
         trees = [next(self.tokenizer.decode_trees_stream(tree_token)) for tree_token in tree_tokens]
         return trees
 
     def patch_tree_token(self, tree_token, tree_config: PerfectTreeConfig):
         d, height = tree_config.d, tree_config.height
         bos_fix = 0 if tree_token[0] == self.tokenizer.bos_token else 1
-        for idx in range(1, d ** height):
+        for idx in range(1, d ** (height - 1)):
             zero_cnt = d_order(idx, d) + 1
             punc_idx = idx * (d + 1) - bos_fix
             if len(tree_token) > punc_idx:
                 tree_token[punc_idx] = self.tokenizer.punctuation(zero_cnt)
             else:
                 break
-        end_idx = (d ** height) * (d + 1) - bos_fix
+        end_idx = (d ** (height - 1)) * (d + 1) - bos_fix
         if len(tree_token) > end_idx:
             tree_token[end_idx] = self.tokenizer.bos_token
 
-    def generate_patched_tree(self, prompt, tree_config: PerfectTreeConfig, num_samples=1, max_tokens=None, **kwargs):
-        tree_tokens = self.generate_tree_tokens(prompt, num_samples=num_samples, max_tokens=max_tokens, **kwargs)
+    def generate_patched_tree(self, prompt, max_tokens, tree_config: PerfectTreeConfig, num_samples=1, **kwargs):
+        tree_tokens = self.generate_tree_tokens(prompt, max_tokens, num_samples=num_samples, **kwargs)
         trees = []
         for tree_token in tree_tokens:
             self.patch_tree_token(tree_token, tree_config)
@@ -73,9 +73,9 @@ class SimpleEngine(Engine):
         return self.sampler.generate_batch_tensor(prompt, max_tokens,
                                                   num_samples=num_samples, end_token=end_token, **kwargs)
 
-    def generate_tree_tokens(self, prompt, num_samples=1, **kwargs):
-        return self.sampler.generate_batch(prompt, num_samples=num_samples, end_token=self.tokenizer.bos_token,
-                                           **kwargs)
+    def generate_tree_tokens(self, prompt, max_tokens, num_samples=1, allow_many=False, **kwargs):
+        end_token = None if allow_many else self.tokenizer.bos_token
+        return self.sampler.generate_batch(prompt, max_tokens, num_samples=num_samples, end_token=end_token, **kwargs)
 
 
 class StatefulEngine(Engine):
@@ -136,14 +136,20 @@ class StatefulEngine(Engine):
                 break
         return result
 
-    def generate_tree_tokens(self, prompt, num_samples=1, max_tokens=None, **kwargs):
+    def generate_tree_tokens(self, prompt, max_tokens, num_samples=1, allow_many=False, **kwargs):
         tree_tokens = [[] for _ in range(num_samples)]
         completed = [False for _ in range(num_samples)]
-        for content_tokens in self.generate_tokens_tensor_batch_stream(prompt, num_samples=num_samples, **kwargs):
+        summary_len, content_len = self.get_summary_and_context_len(prompt)
+        max_states = (max_tokens + content_len - 1) // content_len
+        for content_tokens in self.generate_tokens_tensor_batch_stream(prompt, num_samples=num_samples,
+                                                                       allow_many=allow_many, max_states=max_states,
+                                                                       **kwargs):
             if all(completed):
                 break
             for i in range(num_samples):
                 for token_raw in content_tokens[i]:
+                    if len(tree_tokens[i]) >= max_tokens:
+                        break
                     token = token_raw.item()
                     if token == self.tokenizer.bos_token:
                         completed[i] = True

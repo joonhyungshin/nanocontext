@@ -52,10 +52,10 @@ def check_validity(engine: Engine, prompt, total_samples, max_tokens, config: Pe
     for i in range(0, num_samples, batch_samples):
         actual_batch_samples = min(num_samples - i, batch_samples)
         if patch:
-            trees = engine.generate_patched_tree(prompt, config,
-                                                 num_samples=actual_batch_samples, max_tokens=max_tokens)
+            trees = engine.generate_patched_tree(prompt, max_tokens, config,
+                                                 num_samples=actual_batch_samples, allow_many=True)
         else:
-            trees = engine.generate_tree(prompt, num_samples=actual_batch_samples, max_tokens=max_tokens)
+            trees = engine.generate_tree(prompt, max_tokens, num_samples=actual_batch_samples, allow_many=False)
         for tree in trees:
             try:
                 constraint = get_root_constraint(tree, tokenizer.domain, config)
