@@ -199,7 +199,7 @@ def generate(d, height,
     engine.model.eval()
     prompt = make_prompt(engine.tokenizer, tree_conf)
     if patch:
-        tree_generator = engine.generate_patched_tree(prompt, max_tokens, tree_conf, **engine_kwargs)
+        tree_generator = engine.generate_patched_tree(prompt, max_tokens, tree_conf, allow_many=True, **engine_kwargs)
     else:
         tree_generator = engine.generate_tree(prompt, max_tokens, **engine_kwargs)
     for tree in tree_generator:
