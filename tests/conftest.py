@@ -113,6 +113,13 @@ def ising_data_loader(config, ising_policy, ising_tokenizer):
 
 
 @pytest.fixture
+def ising_data_sample_loader(config, ising_policy, ising_tokenizer):
+    data_loader = broadcast_tree_data_loader(ising_tokenizer, config, ising_policy,
+                                             16, 64, summary=False, mode="sample")
+    return data_loader
+
+
+@pytest.fixture
 def coloring_data_loader(config, coloring_policy, coloring_tokenizer):
     data_loader = broadcast_tree_data_loader(coloring_tokenizer, config, coloring_policy,
                                              16, 64, summary=False)

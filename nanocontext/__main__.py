@@ -184,10 +184,11 @@ def train(d, rho, k, height, device_batch_size, total_batch_size,
 @click.option("--top-k", help="top-k sampling", type=int)
 @click.option("--samples", help="number of samples to generate", default=1, type=int)
 @click.option("--model-path", help="path to model", type=str, required=True)
+@click.option("--patch", help="patch the generated tree", is_flag=True)
 @click.option("--seed", help="random seed", type=int)
 def generate(d, height,
              max_tokens, temperature, top_k, samples,
-             model_path, seed):
+             model_path, patch, seed):
     rng = RNGManager(seed=seed)
     echo(f"generating with seed: {rng.seed}")
     tree_kwargs = dict(d=d, height=height)
@@ -197,7 +198,11 @@ def generate(d, height,
     engine = load_engine(model_path, device, seed=rng.global_torch_rng(device))
     engine.model.eval()
     prompt = make_prompt(engine.tokenizer, tree_conf)
-    for tree in engine.generate_tree(prompt, max_tokens, **engine_kwargs):
+    if patch:
+        tree_generator = engine.generate_patched_tree(prompt, max_tokens, tree_conf, **engine_kwargs)
+    else:
+        tree_generator = engine.generate_tree(prompt, max_tokens, **engine_kwargs)
+    for tree in tree_generator:
         echo(tree)
 
 
@@ -248,7 +253,7 @@ echo = main_process(click.echo)
 
 
 def get_max_tokens(d, height):
-    return (d ** (height - 1)) * (d + 1)
+    return (d ** (height - 1)) * (d + 1) - 1
 
 
 def evaluate_ising(engine, prompt, step, model, run, d, height, total_samples, batch_samples):
@@ -286,7 +291,7 @@ def evaluate_coloring(engine, prompt, step, model, run, d, height, total_samples
     model.train()
     echo("Reconstruction statistics (plain)")
     display_recon_stat(plain_stat)
-    echo("Reconstruction statistics (patched)")
+    echo(f"Reconstruction statistics (patched: d={d}, h={height})")
     display_recon_stat(patched_stat)
 
     valid_rate = (plain_stat["constrained"] + plain_stat["free"]) / total_samples

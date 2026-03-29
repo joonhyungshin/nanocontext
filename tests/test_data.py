@@ -5,6 +5,13 @@ def test_ising_loader(ising_data_loader):
             assert (x[i, 1:] == y[i, :-1]).all()
 
 
+def test_ising_sample_loader(ising_data_sample_loader):
+    for _ in range(10):
+        x, y = next(ising_data_sample_loader)
+        for i in range(x.shape[0]):
+            assert (x[i, 1:] == y[i, :-1]).all()
+
+
 def test_ising_sum_loader(config, ising_cpt_tokenizer, ising_cpt_data_loader):
     summary_len = len(ising_cpt_tokenizer.init_summary_tokens(config))
     for _ in range(10):
