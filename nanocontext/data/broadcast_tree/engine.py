@@ -81,7 +81,7 @@ class SimpleEngine(Engine):
 class StatefulEngine(Engine):
     def get_summary_and_context_len(self, prompt):
         summary_len = len(prompt)
-        content_len = self.sampler.context_len + 1 - 2 * summary_len
+        content_len = self.sampler.min_context_len + 1 - 2 * summary_len
         return summary_len, content_len
 
     def generate_tokens_tensor_batch_stream(self, prompt, num_samples=1, allow_many=False, max_states=None, **kwargs):
