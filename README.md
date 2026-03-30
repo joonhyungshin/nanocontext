@@ -5,16 +5,28 @@
 
 This is a project for training a language model on a synthetic language encoded by broadcasting on ordered trees. This is recursively constructed as the following.
 
-- The root has value + or - (which we call _spins_), each w.p. 1/2.
-- Given the value of a node, each of its children inherits the value w.p. $\rho$ and resamples w.p. $1-\rho$, independently of its siblings.
+- A value of the root is sampled.
+- Given the value of a node, each of its children is sampled according to a "broadcasting rule," (conditionally) independently of its siblings.
 
 Each non-leaf node represents a _context_ of the leaves in its subtree. For instance, a node at a small depth contains many leaves in its subtrees, representing a long context. This is analogous to how a document is organized: chapters, sections, paragraphs, sentences, and so on.
 
 For simplicity, we will only train on perfect $d$-ary trees, which means that all leaves have a common depth $h$ and all non-leaf nodes have exactly $d$ children. A (poorly-trained) model might output a non-perfect tree, though.  
 
+### Broadcasting rules
+
+The current project runs on the following two broadcasting models.
+
+- The **Ising** model, parametrized by the correlation strength $\rho\in[0,1]$.
+  - The root has value + or - (which we call _spins_), each w.p. 1/2.
+  - Given the spin of a node, each of its children inherits the value w.p. $\rho$ and resamples w.p. $1-\rho$.
+- The **coloring** model, parametrized by the number of colors $k\in\mathbb{Z}$.
+  - The root chooses one of the $k$ colors $\{1,\cdots,k\}$ uniformly at random.
+  - Given the color of a node, each of its children chooses one of the $k-1$ colors not chosen by its parent, uniformly at random.
+
+
 ### Tokenizing a tree
 
-In a real world document, there are clear indicators that mark a beginning of a new context: punctuation marks between sentences, indentations between paragraphs, and so on. Analogously, in addition to the values of the leaves, we insert "punctuations" whenever we start a new subtree, and the type of each punctuation depends on the height of the new subtree. For example, the sequence
+In a real world document, there are clear indicators that mark a beginning of a new context: punctuation marks between sentences, indentations between paragraphs, and so on. Analogously, in addition to the values of the leaves, we insert "punctuations" whenever we start a new subtree, and the type of each punctuation depends on the height of the new subtree. For example, in the Ising model, the sequence
 ```
 [BOS] + + 1 - + 2 - - 1 - +
 ```
@@ -34,8 +46,11 @@ You can train nanochat on the broadcast model using the script `python -m nanoco
 
 - Tree parameters
   - `-d`: number of children of each non-leaf node $d$. Defaults to 3, i.e., ternary trees.
-  - `--rho`: correlation strength $\rho$.
+  - One of the two parameters for the respective broadcasting rule:
   - `--height`: height (or depth) of the tree $h$.
+- Broadcasting parameters (exactly one of the following two must be set)
+  - `--rho`: correlation strength $\rho$, for the Ising model.
+  - `-k`: number of colors $k$, for the coloring model.
 - Model (nanochat) hyperparameters
   - `--context-size`: maximum context size the model can learn. Defaults to 2048.
   - `--layers`: number of transformer layers. Defaults to 20.
@@ -52,7 +67,6 @@ You can train nanochat on the broadcast model using the script `python -m nanoco
 
 Once nanochat is trained, you can ask it to generate a tree using the script `python -m nanocontext generate`.
 
-- Model (nanochat) hyperparameters: same as above.
 - Model loading
   - `--model-path`: path to the trained model.
 - Sampling parameters
@@ -61,7 +75,6 @@ Once nanochat is trained, you can ask it to generate a tree using the script `py
   - `--samples`: number of samples to generate. Defaults to 1.
   - `--summary-mode`: generate using the model as a state machine (`segment`, `path`, or `disabled`). Defaults to `disabled`.
 
-Currently, you must specify the model hyperparameters same as the above training step. This is planned to be reworked in the future.
 
 ### Evaluating nanochat
 

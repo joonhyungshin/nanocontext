@@ -5,11 +5,11 @@ import torch
 from nanocontext.sample import NanochatSampler
 from nanocontext.utils import device_to_use, d_order
 from nanocontext.models.nanochat import NanochatConfig, Nanochat
+from nanocontext.tree import PerfectTreeConfig
 from nanocontext.tree.coloring import ColoringDomain
 from nanocontext.tree.ising import IsingDomain
 
 from .tokenizer import PerfectTreeTokenizer, SegmentSummaryTokenizer, PathSummaryTokenizer
-from ...tree import PerfectTreeConfig
 
 
 class Engine:

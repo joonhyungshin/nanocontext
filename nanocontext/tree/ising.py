@@ -17,6 +17,11 @@ class IsingDomain(ValueDomain):
     def value_to_char(self, value):
         return "-" if value < 0 else "+"
 
+    def __eq__(self, other):
+        if not isinstance(other, IsingDomain):
+            return NotImplemented
+        return True
+
 
 class IsingBroadcastPolicy(BroadcastPolicy):
     def __init__(self, rho, seed=None):

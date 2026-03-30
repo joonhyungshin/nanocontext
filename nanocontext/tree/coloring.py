@@ -21,6 +21,11 @@ class ColoringDomain(ValueDomain):
     def value_to_char(self, value):
         return chr(ord('A') + value)
 
+    def __eq__(self, other):
+        if not isinstance(other, ColoringDomain):
+            return NotImplemented
+        return self.k == other.k
+
 
 class ColoringBroadcastPolicy(BroadcastPolicy):
     def __init__(self, k, seed=None):
