@@ -46,7 +46,6 @@ You can train nanochat on the broadcast model using the script `python -m nanoco
 
 - Tree parameters
   - `-d`: number of children of each non-leaf node $d$. Defaults to 3, i.e., ternary trees.
-  - One of the two parameters for the respective broadcasting rule:
   - `--height`: height (or depth) of the tree $h$.
 - Broadcasting parameters (exactly one of the following two must be set)
   - `--rho`: correlation strength $\rho$, for the Ising model.
@@ -73,12 +72,14 @@ Once nanochat is trained, you can ask it to generate a tree using the script `py
   - `--max-tokens`: maximum number of tokens to generate.
   - `--temperature`: sampling temperature. Defaults to 1.
   - `--samples`: number of samples to generate. Defaults to 1.
-  - `--summary-mode`: generate using the model as a state machine (`segment`, `path`, or `disabled`). Defaults to `disabled`.
 
 
 ### Evaluating nanochat
 
-We evaluate the model using the distribution of the sum of spins (_total spin_ in short) of a generated tree. Since it takes exactly $d^h+d^{h-1}-1$ tokens to encode a tree, we let the model generate $d^h+d^{h-1}-1$ tokens and count the number of `+` tokens and `-` tokens (even if the generated language is ill-formed).
+We use different evaluation metric for the two broadcasting models.
+
+- For the **Ising** model, we plot the distribution of the sum of spins (_total spin_ in short) of the leafs of a generated tree. Since it takes exactly $d^h+d^{h-1}-1$ tokens to encode a tree, we let the model generate $d^h+d^{h-1}-1$ tokens and count the number of `+` tokens and `-` tokens (even if the generated language is ill-formed).
+- For the **coloring** model, we construct a perfect tree whose leaves are those sampled from the model, and try to reconstruct the color of the root. We plot the proportion of the trees where the color of the root can be successfully reconstructed.
 
 
 ### Training nanochat as a state machine
@@ -89,8 +90,8 @@ We want the model to somehow memorize and leverage long context. Our strategy is
 
 The crucial part is to design state transitions and to encode state information, efficient enough to fit in a small context size. Two approaches are used.
 
-- "Segment" encoding. This is a bottom-up approach; as the model sees (either from the training sequence or from its own generated tokens) a new spin and if that concludes a subtree of height $h_1$, the last $d^{h_1}$ tokens is summarized using the root spin of that subtree.  
-- "Path" encoding. The current state is encoded using the spins of the ancestors of the leaf we wish to generate at a given time. This is a top-down approach; when the model generates a document, it starts by generating the root and goes all the way down to the new leaf.
+- "Segment" encoding. This is a bottom-up approach; as the model sees (either from the training sequence or from its own generated tokens) a new value and if that concludes a subtree of height $h_1$, the last $d^{h_1}$ tokens is summarized using the root value of that subtree.  
+- "Path" encoding. The current state is encoded using the values of the ancestors of the leaf we wish to generate at a given time. This is a top-down approach; when the model generates a document, it starts by generating the root and goes all the way down to the new leaf.
 
 
 ## TODO
