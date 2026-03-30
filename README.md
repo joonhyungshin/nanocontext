@@ -39,6 +39,10 @@ Currently, the project is written purely in Python and the dependencies are mana
 ```shell
 pixi run -e dsi-cpu python -m nanocontext --help
 ```
+To run the tests:
+```shell
+pixi run -e macos python -m pytest
+```
 
 ### Training nanochat
 
