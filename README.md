@@ -82,7 +82,7 @@ We use different evaluation metric for the two broadcasting models.
 - For the **Ising** model, we plot the distribution of the sum of spins (_total spin_ in short) of the leafs of a generated tree. Since it takes exactly $d^h+d^{h-1}-1$ tokens to encode a tree, we let the model generate $d^h+d^{h-1}-1$ tokens and count the number of `+` tokens and `-` tokens (even if the generated language is ill-formed).
 - For the **coloring** model, we construct a perfect tree whose leaves are those sampled from the model, and try to reconstruct the color of the root. We plot the proportion of the trees where the color of the root can be successfully reconstructed.
 
-Note that when the context size of a model is much smaller than $d^h+d^{h-1}-1$, the model might not know what punctuation token to generate during sampling. For this scenario, especially in the coloring experiment, we ignore the correctness of the punctuation tokens and just map the generated colors to an imaginary perfect tree. From the implementation perspective, this is done through "patching" the punctuation tokens by replacing them with the correct ones.  
+Note that when the context size of a model is much smaller than $d^h+d^{h-1}-1$, the model might not know what punctuation token to generate during sampling. For this scenario, especially in the coloring experiment, we ignore the correctness of the punctuation tokens and just map the generated colors to the leaves of an imaginary perfect tree. From the implementation perspective, this is done through "patching" the punctuation tokens by replacing them with the correct ones.  
 
 
 ### Training nanochat as a state machine
