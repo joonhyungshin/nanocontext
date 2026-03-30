@@ -96,7 +96,7 @@ class NanochatSampler:
                 logits = logits[:, -1, :]
                 context_window_pos -= min(self.min_context_len, context_shift + 1)
                 if context_window_pos > 0:
-                    context_window[:, :context_window_pos] = context_window[:, -context_window_pos:]
+                    context_window[:, :context_window_pos] = context_window[:, -context_window_pos:].clone()
             else:
                 x = next_tokens.unsqueeze(1)
                 with autocast():

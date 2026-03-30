@@ -11,7 +11,7 @@ from nanocontext.utils import ddp_world_size
 def sample_magnets(engine: Engine, prompt, num_samples, max_tokens,
                    batch_samples=None):
     batch_samples = batch_samples or num_samples
-    magnet = torch.empty(num_samples, device=engine.device)
+    magnet = torch.zeros(num_samples, device=engine.device)
     tokenizer = engine.tokenizer
     pos_token = tokenizer.tokenize_value(1)
     neg_token = tokenizer.tokenize_value(-1)
