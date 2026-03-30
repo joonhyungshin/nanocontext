@@ -95,7 +95,8 @@ class NanochatSampler:
                 logits = self._prefill_context_and_forward(context_window, kv_cache=kv_cache)
                 logits = logits[:, -1, :]
                 context_window_pos -= min(self.min_context_len, context_shift + 1)
-                context_window[:, :context_window_pos] = context_window[:, -context_window_pos:]
+                if context_window_pos > 0:
+                    context_window[:, :context_window_pos] = context_window[:, -context_window_pos:]
             else:
                 x = next_tokens.unsqueeze(1)
                 with autocast():
