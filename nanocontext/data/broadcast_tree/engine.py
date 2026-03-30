@@ -165,7 +165,8 @@ def save_engine(engine: Engine, filename):
     tokenizer = engine.tokenizer
     domain = tokenizer.domain
     model = engine.model
-    context_len = engine.sampler.context_len
+    min_context_len = engine.sampler.min_context_len
+    max_context_len = engine.sampler.max_context_len
     if isinstance(engine, SimpleEngine):
         summary = "disabled"
     elif isinstance(tokenizer, SegmentSummaryTokenizer):
@@ -188,7 +189,8 @@ def save_engine(engine: Engine, filename):
     state_dict = {
         "summary": summary,
         "max_vocab_size": tokenizer.max_vocab_size,
-        "context_len": context_len,
+        "min_context_len": min_context_len,
+        "max_context_len": max_context_len,
         "domain": domain,
         "model": {
             "type": "nanochat",
@@ -202,7 +204,8 @@ def save_engine(engine: Engine, filename):
 def load_engine(filename, device=None, seed=None):
     device = device or device_to_use()
     state_dict = torch.load(filename, map_location=device)
-    context_len = state_dict["context_len"]
+    min_context_len = state_dict["min_context_len"]
+    max_context_len = state_dict["max_context_len"]
     summary = state_dict["summary"]
     domain_dict = state_dict["domain"]
     max_vocab_size = state_dict["max_vocab_size"]
@@ -234,6 +237,6 @@ def load_engine(filename, device=None, seed=None):
     model.to_empty(device=device)
     model.load_state_dict(model_state_dict["parameters"], strict=True, assign=True)
     model.preprocess()
-    sampler = NanochatSampler(model, context_len, seed=seed)
+    sampler = NanochatSampler(model, min_context_len, max_context_len, seed=seed)
     engine = engine_class(tokenizer, sampler)
     return engine

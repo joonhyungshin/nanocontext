@@ -6,9 +6,10 @@ from .utils import autocast, get_torch_rng
 
 
 class NanochatSampler:
-    def __init__(self, model, context_len=None, seed=None):
+    def __init__(self, model, min_context_len=None, max_context_len=None, seed=None):
         self.model = model
-        self.context_len = context_len or self.model.config.sequence_len
+        self.min_context_len = min_context_len or self.model.config.sequence_len
+        self.max_context_len = max_context_len or self.model.config.rotary_seq_len
         self.rng = get_torch_rng(device=self.model.device, seed=seed, local=True)
 
     @property
@@ -69,8 +70,9 @@ class NanochatSampler:
         )
         logits = self._prefill_context_and_forward(x, kv_cache=kv_cache)
         logits = logits[:, -1, :].expand(num_samples, -1)
-        context_window = torch.empty((num_samples, self.context_len), dtype=torch.long, device=self.device)
+        context_window = torch.empty((num_samples, self.min_context_len), dtype=torch.long, device=self.device)
         context_window_pos = 0
+        context_shift = self.max_context_len - self.min_context_len
         num_generated = 0
         while True:
             if max_tokens is not None and num_generated >= max_tokens:
@@ -86,13 +88,14 @@ class NanochatSampler:
             yield next_tokens
             num_generated += 1
 
-            if kv_cache.get_pos() + self.context_len > self.model.config.rotary_seq_len:
+            if kv_cache.get_pos() > context_shift:
                 context_window[:, context_window_pos] = next_x[:, 0]
                 context_window_pos += 1
-            if context_window_pos >= self.context_len:
+            if context_window_pos >= self.min_context_len:
                 logits = self._prefill_context_and_forward(context_window, kv_cache=kv_cache)
                 logits = logits[:, -1, :]
-                context_window_pos = 0
+                context_window_pos -= min(self.min_context_len, context_shift + 1)
+                context_window[:, :context_window_pos] = context_window[:, -context_window_pos:]
             else:
                 x = next_tokens.unsqueeze(1)
                 with autocast():

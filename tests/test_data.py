@@ -71,3 +71,16 @@ def test_coloring_sum_sample_loader(config, coloring_cpt_tokenizer, coloring_cpt
                     if parent_col == next_col:
                         print(x[i, :])
                     assert parent_col != next_col
+
+
+def test_coloring_stream_loader(config, coloring_data_loader):
+    for _ in range(100):
+        x, y = next(coloring_data_loader)
+        batch_size, seq_len = x.shape
+        for i in range(batch_size):
+            for j in range(seq_len - 1):
+                assert x[i, j + 1] == y[i, j]
+            for j in range(seq_len - config.d - 1):
+                if x[i, j] != 0 and x[i, j + config.d + 1] != 0 and (x[i, j + config.d + 1] - x[i, j]) % 2 != 0:
+                    print(x[i, :])
+                    assert False

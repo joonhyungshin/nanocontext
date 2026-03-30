@@ -129,7 +129,7 @@ def train(d, rho, k, height, device_batch_size, total_batch_size,
                                     device_batch_size, context_len, batch_height, tokenizer,
                                     summary=enable_summary, data_mode=data_mode, device=device,
                                     seed=rng.local_numpy_rng)
-        sampler = NanochatSampler(model, seed=rng.local_torch_rng(device))
+        sampler = NanochatSampler(model, max_context_len=context_len, seed=rng.local_torch_rng(device))
         engine = get_engine(tokenizer, sampler)
         wandb_conf = model_kwargs | trainer_kwargs | policy_conf | {
             "d": d,
