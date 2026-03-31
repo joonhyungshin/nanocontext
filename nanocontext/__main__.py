@@ -192,51 +192,57 @@ def generate(d, height,
     rng = RNGManager(seed=seed)
     echo(f"generating with seed: {rng.seed}")
     tree_kwargs = dict(d=d, height=height)
-    engine_kwargs = dict(num_samples=samples, temperature=temperature, top_k=top_k)
+    gen_kwargs = dict(num_samples=samples, temperature=temperature, top_k=top_k)
     tree_conf = PerfectTreeConfig(**tree_kwargs)
     device = device_to_use()
     engine = load_engine(model_path, device, seed=rng.global_torch_rng(device))
     engine.model.eval()
     prompt = make_prompt(engine.tokenizer, tree_conf)
     if patch:
-        tree_generator = engine.generate_patched_tree(prompt, max_tokens, tree_conf, allow_many=True, **engine_kwargs)
+        tree_generator = engine.generate_patched_tree(prompt, max_tokens, tree_conf, allow_many=True, **gen_kwargs)
     else:
-        tree_generator = engine.generate_tree(prompt, max_tokens, **engine_kwargs)
+        tree_generator = engine.generate_tree(prompt, max_tokens, **gen_kwargs)
     for tree in tree_generator:
         echo(tree)
 
 
 @cli.command()
 @click.option("-d", help="number of children of a tree", default=3, type=int)
-@click.option("--rho", help="correlation", type=float, required=True)
 @click.option("--height", help="height of a tree", type=int, required=True)
+@click.option("--eval-height", help="height to use in evaluation", type=int)
 @click.option("--samples", help="number of samples to generate", default=1024, type=int)
-@click.option("--batch-height", help="batch height to stream a tree", type=int)
+@click.option("--sample-batch", help="batch size for sampling", type=int)
+@click.option("--model-path", help="path to model", type=str, required=True)
 @click.option("--seed", help="random seed", type=int)
-def evaluate(d, rho, height, batch_height, samples, seed):
-    from matplotlib import pyplot as plt
-
+def evaluate(d, height, eval_height, samples, sample_batch, model_path, seed):
     rng = RNGManager(seed=seed)
+    echo(f"generating with seed: {rng.seed}")
+    eval_height = min(eval_height, height) if eval_height is not None else height
     tree_conf = PerfectTreeConfig(d=d, height=height)
-    policy = IsingBroadcastPolicy(rho, seed=rng.local_numpy_rng)
-    batch_height = batch_height or height
-    # num_leaves = d ** height
-    # tree_generator = get_tree_generator(dist_type, tree_conf, batch_height,
-    #                                     num_samples=samples, seed=rng.local_numpy_rng)
-    tree_generator = []
-    echo(f"Evaluating with {samples} samples")
-    x = np.zeros(samples)
-    for tree in tree_generator:
-        x += np.sum(tree.all_leaves, axis=1)
-    # x /= math.sqrt(num_leaves)
-    var, kurtosis = compute_moments(x)
-    echo(f"Variance: {var}")
-    echo(f"Kurtosis: {kurtosis}")
-    echo(f"Histogram:")
-    plt.title(f"Sum of leaves histogram")
-    plt.xlabel("sum of leaves")
-    plt.hist(x, bins=64)
-    plt.show()
+    eval_tree_conf = PerfectTreeConfig(d=d, height=eval_height)
+
+    with ddp_context():
+        device = device_to_use()
+        engine = load_engine(model_path, device, seed=rng.global_torch_rng(device))
+        engine.model.eval()
+        domain = engine.tokenizer.domain
+        prompt = make_prompt(engine.tokenizer, tree_conf)
+        max_tokens = get_max_tokens(d, eval_height)
+
+        echo(f"generating {samples} samples...")
+        if isinstance(domain, IsingDomain):
+            echo("detected Ising experiment.")
+            var, kurtosis = evaluate_moments(engine, prompt, samples, max_tokens, batch_samples=sample_batch)
+            echo(f"Variance: {var}")
+            echo(f"Kurtosis: {kurtosis}")
+        elif isinstance(domain, ColoringDomain):
+            echo("detected Coloring experiment.")
+            stat = check_validity(engine, prompt, samples, max_tokens, eval_tree_conf,
+                                  batch_samples=sample_batch, patch=True)
+            display_recon_stat(stat)
+            echo(f"Valid rate: {stat["constrained"] + stat["free"]} / {samples}")
+        else:
+            raise click.ClickException("Unknown domain type")
 
 
 def model_hyperparams_from_layers(n_layers, n_heads=None, n_kv_heads=None, n_embd=None):
@@ -271,18 +277,19 @@ def evaluate_ising(engine, prompt, step, model, run, d, height, total_samples, b
     }, step=step)
 
 
+def display_recon_stat(stat):
+    echo(f"Unsatisfied: {stat['unsatisfied']['total']}")
+    for depth in range(len(stat["unsatisfied"]["details"])):
+        echo(f"  At depth {depth}: {stat['unsatisfied']['details'][depth]}")
+    echo(f"Invalid: {stat['invalid']}")
+    echo(f"Constrained: {stat['constrained']}")
+    echo(f"Free: {stat['free']}")
+
+
 def evaluate_coloring(engine, prompt, step, model, run, d, height, total_samples, batch_samples):
     max_tokens = get_max_tokens(d, height)
     config = PerfectTreeConfig(d=d, height=height)
     model.eval()
-
-    def display_recon_stat(stat):
-        echo(f"Unsatisfied: {stat['unsatisfied']['total']}")
-        for depth in range(height):
-            echo(f"  At depth {depth}: {stat['unsatisfied']['details'][depth]}")
-        echo(f"Invalid: {stat['invalid']}")
-        echo(f"Constrained: {stat['constrained']}")
-        echo(f"Free: {stat['free']}")
 
     checker_kwargs = dict(engine=engine, prompt=prompt, total_samples=total_samples, max_tokens=max_tokens,
                           config=config, batch_samples=batch_samples)
