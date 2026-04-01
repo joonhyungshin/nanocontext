@@ -41,20 +41,24 @@ def gather_magnets(engine: Engine, prompt, total_samples, max_tokens,
         return magnet
 
 
+def compute_moments(magnet):
+    n = len(magnet)
+    total_magnet = np.sum(magnet)
+    mean_magnet = total_magnet / n
+    magnet_var = np.sum((magnet - mean_magnet) ** 2)
+    magnet_fourth = np.sum((magnet - mean_magnet) ** 4)
+    biased_var = magnet_var / n
+    biased_fourth = magnet_fourth / n
+    unbiased_var = magnet_var / (n - 1)
+    sample_kurtosis = biased_fourth / biased_var ** 2 - 3
+    fisher_kurtosis = (n - 1) / ((n - 2) * (n - 3)) * ((n + 1) * sample_kurtosis + 6)
+    return unbiased_var, fisher_kurtosis
+
+
 def evaluate_moments(engine: Engine, prompt, total_samples, max_tokens,
                      batch_samples=None, actual_tokens_hint=None):
     """Computes sample variance and excess kurtosis."""
     magnet_tensor = gather_magnets(engine, prompt, total_samples, max_tokens, batch_samples=batch_samples)
     magnet = magnet_tensor.detach().cpu().numpy()
-    n = len(magnet)
     normalized_magnet = magnet / math.sqrt(actual_tokens_hint or max_tokens)
-    total_normalized_magnet = np.sum(normalized_magnet)
-    mean_normalized_magnet = total_normalized_magnet / n
-    normalized_magnet_var = np.sum((normalized_magnet - mean_normalized_magnet) ** 2)
-    normalized_magnet_fourth = np.sum((normalized_magnet - mean_normalized_magnet) ** 4)
-    biased_var = normalized_magnet_var / n
-    biased_fourth = normalized_magnet_fourth / n
-    unbiased_var = normalized_magnet_var / (n - 1)
-    sample_kurtosis = biased_fourth / biased_var ** 2 - 3
-    fisher_kurtosis = (n - 1) / ((n - 2) * (n - 3)) * ((n + 1) * sample_kurtosis + 6)
-    return unbiased_var, fisher_kurtosis
+    return compute_moments(normalized_magnet)

@@ -1,7 +1,7 @@
+import math
 import time
 
 import click
-
 import numpy as np
 import torch
 
@@ -10,12 +10,13 @@ from nanocontext.data.broadcast_tree import (
     SummaryTokenizer, SegmentSummaryTokenizer, PathSummaryTokenizer,
     PerfectTreeTokenizer
 )
-from nanocontext.evaluate.coloring import check_validity
 from nanocontext.models.nanochat import NanochatConfig, Nanochat
-from nanocontext.evaluate.ising import evaluate_moments, gather_magnets
+from nanocontext.evaluate.coloring import check_validity, get_root_constraint
+from nanocontext.evaluate.ising import evaluate_moments, gather_magnets, compute_moments
 from nanocontext.train import NanochatTrainerConfig, NanochatTrainer, TrainerSignal
 from nanocontext.sample import NanochatSampler
-from nanocontext.tree import IsingBroadcastPolicy, ColoringBroadcastPolicy, PerfectTreeConfig
+from nanocontext.tree import IsingBroadcastPolicy, ColoringBroadcastPolicy, PerfectTreeConfig, BroadcastTree, \
+    BroadcastForest
 from nanocontext.tree.coloring import ColoringDomain
 from nanocontext.tree.ising import IsingDomain
 from nanocontext.utils import (
@@ -172,7 +173,7 @@ def train(d, rho, k, height, device_batch_size, total_batch_size,
             trainer.init_weights()
             trainer.train(num_iterations, grad_accum_steps)
             echo("Training finished")
-            echo(f"Elapsed: {ctx["total_training_time"] / 60:.2f}m")
+            echo(f"Elapsed: {ctx['total_training_time'] / 60:.2f}m")
             save_engine(engine, save_to)
 
 
@@ -246,6 +247,42 @@ def evaluate(d, height, eval_height, samples, sample_batch, model_path, seed):
             echo(f"Valid rate: {stat["constrained"] + stat["free"]} / {samples}")
         else:
             raise click.ClickException("Unknown domain type")
+
+
+@cli.command()
+@click.option("-d", help="number of children of a tree", default=3, type=int)
+@click.option("--rho", help="correlation for Ising experiment", type=float)
+@click.option("-k", "--colors", "k", help="number of colors for coloring experiment", type=int)
+@click.option("--height", help="height of a tree", type=int, required=True)
+@click.option("--samples", help="number of samples to generate", default=1024, type=int)
+@click.option("--seed", help="random seed", type=int)
+def simulate(d, height, rho, k, samples, seed):
+    if (rho is None and k is None) or not (rho is None or k is None):
+        raise ValueError("exactly one of k (coloring) or rho (Ising) must be given")
+    rng = RNGManager(seed=seed)
+    echo(f"Simulating with seed: {rng.seed}")
+    tree_conf = PerfectTreeConfig(d=d, height=height)
+    if rho is not None:
+        echo(f"Ising experiment with rho: {rho}")
+        policy = IsingBroadcastPolicy(rho, seed=rng.global_numpy_rng)
+        forest = BroadcastForest(tree_conf, policy, num_trees=samples)
+        forest.sample()
+        magnet = np.sum(forest.values[-1], axis=1) / math.sqrt(d ** height)
+        var, kurtosis = compute_moments(magnet)
+        echo(f"Variance: {var}")
+        echo(f"Kurtosis: {kurtosis}")
+    else:
+        echo(f"Coloring experiment with k: {k}")
+        policy = ColoringBroadcastPolicy(k, seed=rng.global_numpy_rng)
+        free_count = 0
+        forest = BroadcastForest(tree_conf, policy, num_trees=samples)
+        forest.sample()
+        for i in range(samples):
+            tree = forest[i]
+            if get_root_constraint(tree, policy.domain, only_leaves=True) is None:
+                free_count += 1
+        echo(f"Free trees: {free_count}")
+        echo(f"Constraint trees: {samples - free_count}")
 
 
 def model_hyperparams_from_layers(n_layers, n_heads=None, n_kv_heads=None, n_embd=None):

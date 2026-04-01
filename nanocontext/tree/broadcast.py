@@ -15,13 +15,12 @@ class BroadcastPolicy:
 
 class BroadcastForest:
     def __init__(self, config: PerfectTreeConfig, policy: BroadcastPolicy,
-                 num_trees=1, root_values=None, seed=None):
+                 num_trees=1, root_values=None):
         self.config = config
         self.policy = policy
         self.domain = policy.get_domain()
         self.num_trees = num_trees
         self.root_values = root_values
-        self.rng = np.random.default_rng(seed=seed)
         self.values = []
 
     @property

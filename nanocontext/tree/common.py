@@ -11,6 +11,9 @@ class AbstractOrderedTree:
     def get_children_list(self, node):
         return list(self.children_stream(node))
 
+    def num_children(self, node):
+        return len(self.get_children_list(node))
+
     def get_root(self):
         raise NotImplementedError
 
@@ -168,6 +171,10 @@ class AbstractPerfectTree(AbstractOrderedTree):
         depth, idx = node
         for i in range(self.d):
             yield depth + 1, idx * self.d + i
+
+    def num_children(self, node):
+        depth, idx = node
+        return self.d if depth < self.height else 0
 
     def segment_stream(self, start, end):
         assert 0 <= start <= end <= self.num_leaves

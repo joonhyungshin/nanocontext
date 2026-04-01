@@ -1,7 +1,7 @@
 import torch
 import torch.distributed as dist
 
-from nanocontext.tree import LinkedOrderedTree, ValueDomain, PerfectTreeConfig
+from nanocontext.tree import ValueDomain, PerfectTreeConfig, AbstractOrderedTree
 from nanocontext.data.broadcast_tree import Engine
 from nanocontext.utils import ddp_world_size
 
@@ -16,12 +16,13 @@ class InvalidStructureException(Exception):
     pass
 
 
-def get_color_constraint(node: LinkedOrderedTree.Node, domain: ValueDomain, depth):
+def get_color_constraint(tree: AbstractOrderedTree, node, domain: ValueDomain, depth, only_leaves=False):
     colors = set(range(domain.get_size()))
-    if node.value is not None:
-        return node.value
-    for child in node.children:
-        child_constraint = get_color_constraint(child, domain, depth + 1)
+    value = tree.get_value(node)
+    if value is not None and (not only_leaves or tree.num_children(node) == 0):
+        return value
+    for child in tree.children_stream(node):
+        child_constraint = get_color_constraint(tree, child, domain, depth + 1)
         if child_constraint is not None:
             colors.discard(child_constraint)
     if len(colors) == 0:
@@ -31,25 +32,28 @@ def get_color_constraint(node: LinkedOrderedTree.Node, domain: ValueDomain, dept
     return None
 
 
-def check_subtree_structure(node: LinkedOrderedTree.Node, config: PerfectTreeConfig, depth):
-    if depth == config.height and len(node.children) != 0:
+def check_subtree_structure(tree: AbstractOrderedTree, node, config: PerfectTreeConfig, depth):
+    num_children = tree.num_children(node)
+    if depth == config.height and num_children != 0:
         raise InvalidStructureException()
-    if depth < config.height and len(node.children) != config.d:
+    if depth < config.height and num_children != config.d:
         raise InvalidStructureException()
-    for child in node.children:
-        check_subtree_structure(child, config, depth + 1)
+    for child in tree.children_stream(node):
+        check_subtree_structure(tree, child, config, depth + 1)
 
 
-def get_root_constraint(tree: LinkedOrderedTree, domain: ValueDomain):
-    if tree.root is None:
+def get_root_constraint(tree: AbstractOrderedTree, domain: ValueDomain, only_leaves=False):
+    root = tree.get_root()
+    if root is None:
         raise InvalidStructureException()
-    return get_color_constraint(tree.root, domain, 0)
+    return get_color_constraint(tree, root, domain, 0, only_leaves=only_leaves)
 
 
-def check_structure(tree: LinkedOrderedTree, config: PerfectTreeConfig):
-    if tree.root is None:
+def check_structure(tree: AbstractOrderedTree, config: PerfectTreeConfig):
+    root = tree.get_root()
+    if root is None:
         raise InvalidStructureException()
-    check_subtree_structure(tree.root, config, 0)
+    check_subtree_structure(tree, root, config, 0)
 
 
 def check_validity(engine: Engine, prompt, total_samples, max_tokens, config: PerfectTreeConfig,
