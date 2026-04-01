@@ -191,6 +191,7 @@ def generate(d, height,
              model_path, patch, seed):
     rng = RNGManager(seed=seed)
     echo(f"generating with seed: {rng.seed}")
+    echo(f"using model: {model_path}")
     tree_kwargs = dict(d=d, height=height)
     gen_kwargs = dict(num_samples=samples, temperature=temperature, top_k=top_k)
     tree_conf = PerfectTreeConfig(**tree_kwargs)
@@ -216,7 +217,8 @@ def generate(d, height,
 @click.option("--seed", help="random seed", type=int)
 def evaluate(d, height, eval_height, samples, sample_batch, model_path, seed):
     rng = RNGManager(seed=seed)
-    echo(f"generating with seed: {rng.seed}")
+    echo(f"evaluating with seed: {rng.seed}")
+    echo(f"using model: {model_path}")
     eval_height = min(eval_height, height) if eval_height is not None else height
     tree_conf = PerfectTreeConfig(d=d, height=height)
     eval_tree_conf = PerfectTreeConfig(d=d, height=eval_height)
