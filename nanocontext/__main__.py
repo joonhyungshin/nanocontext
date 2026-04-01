@@ -244,7 +244,7 @@ def evaluate(d, height, eval_height, samples, sample_batch, model_path, seed):
             stat = check_validity(engine, prompt, samples, max_tokens, eval_tree_conf,
                                   batch_samples=sample_batch, patch=True)
             display_recon_stat(stat)
-            echo(f"Valid rate: {stat["constrained"] + stat["free"]} / {samples}")
+            echo(f"Valid rate: {stat['constrained'] + stat['free']} / {samples}")
         else:
             raise click.ClickException("Unknown domain type")
 
