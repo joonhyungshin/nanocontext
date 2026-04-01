@@ -1,5 +1,6 @@
 import math
 
+import numpy as np
 import torch
 import torch.distributed as dist
 
@@ -43,23 +44,17 @@ def gather_magnets(engine: Engine, prompt, total_samples, max_tokens,
 def evaluate_moments(engine: Engine, prompt, total_samples, max_tokens,
                      batch_samples=None, actual_tokens_hint=None):
     """Computes sample variance and excess kurtosis."""
-    world_size = ddp_world_size()
-    num_samples = (total_samples + world_size - 1) // world_size
-    n = num_samples * world_size
-    magnet = sample_magnets(engine, prompt, num_samples, max_tokens, batch_samples=batch_samples)
+    magnet_tensor = gather_magnets(engine, prompt, total_samples, max_tokens, batch_samples=batch_samples)
+    magnet = magnet_tensor.detach().cpu().numpy()
+    n = len(magnet)
     normalized_magnet = magnet / math.sqrt(actual_tokens_hint or max_tokens)
-    total_normalized_magnet = torch.sum(normalized_magnet)
-    if world_size > 1:
-        dist.all_reduce(total_normalized_magnet, op=dist.ReduceOp.SUM)
+    total_normalized_magnet = np.sum(normalized_magnet)
     mean_normalized_magnet = total_normalized_magnet / n
-    normalized_magnet_var = torch.sum((normalized_magnet - mean_normalized_magnet) ** 2)
-    normalized_magnet_fourth = torch.sum((normalized_magnet - mean_normalized_magnet) ** 4)
-    if world_size > 1:
-        dist.all_reduce(normalized_magnet_var, op=dist.ReduceOp.SUM)
-        dist.all_reduce(normalized_magnet_fourth, op=dist.ReduceOp.SUM)
+    normalized_magnet_var = np.sum((normalized_magnet - mean_normalized_magnet) ** 2)
+    normalized_magnet_fourth = np.sum((normalized_magnet - mean_normalized_magnet) ** 4)
     biased_var = normalized_magnet_var / n
     biased_fourth = normalized_magnet_fourth / n
     unbiased_var = normalized_magnet_var / (n - 1)
     sample_kurtosis = biased_fourth / biased_var ** 2 - 3
     fisher_kurtosis = (n - 1) / ((n - 2) * (n - 3)) * ((n + 1) * sample_kurtosis + 6)
-    return unbiased_var.item(), fisher_kurtosis.item()
+    return unbiased_var, fisher_kurtosis
