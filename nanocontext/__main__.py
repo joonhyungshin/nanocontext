@@ -234,7 +234,8 @@ def evaluate(d, height, eval_height, samples, sample_batch, model_path, seed):
         echo(f"generating {samples} samples...")
         if isinstance(domain, IsingDomain):
             echo("detected Ising experiment.")
-            var, kurtosis = evaluate_moments(engine, prompt, samples, max_tokens, batch_samples=sample_batch)
+            var, kurtosis = evaluate_moments(engine, prompt, samples, max_tokens,
+                                             batch_samples=sample_batch, actual_tokens_hint=d**eval_height)
             echo(f"Variance: {var}")
             echo(f"Kurtosis: {kurtosis}")
         elif isinstance(domain, ColoringDomain):
