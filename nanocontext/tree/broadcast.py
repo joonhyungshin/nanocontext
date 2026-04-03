@@ -255,16 +255,16 @@ def markov_forest(config: PerfectTreeConfig, policy: BroadcastPolicy, batch_heig
     batch_height = min(height, batch_height) if batch_height is not None else height
     batch_depth = height - batch_height
     forest = None
+    probs = [1]
+    for i in range(batch_depth):
+        probs.append(config.d - 1 if i == 0 else probs[-1] * config.d)
+    for i in range(batch_depth + 1):
+        probs[i] /= config.d ** batch_depth
     for tree_idx in range(d ** batch_depth):
         if tree_idx == 0:
             root_values = None
         else:
             root_values = forest.get_root_values().copy()
-            probs = [1]
-            for i in range(batch_depth):
-                probs.append(config.d - 1 if i == 0 else probs[-1] * config.d)
-            for i in range(batch_depth + 1):
-                probs[i] /= config.d ** batch_depth
             membership = rng.choice(range(batch_depth, -1, -1), size=num_trees, p=probs)
             for i in range(batch_depth):
                 target_idx = (membership >= i)

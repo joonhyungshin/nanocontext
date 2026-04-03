@@ -302,6 +302,7 @@ def simulate(d, height, rho, k, samples, markov_height, seed):
         if unsat_total_count > 0:
             for i in range(height - markov_height):
                 echo(f"  at depth {i}: {unsat_count[i]}")
+        echo(f"Valid rate: {(free_count + constrained_count) / samples}")
 
 
 def model_hyperparams_from_layers(n_layers, n_heads=None, n_kv_heads=None, n_embd=None):
