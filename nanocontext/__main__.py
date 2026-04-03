@@ -11,12 +11,11 @@ from nanocontext.data.broadcast_tree import (
     PerfectTreeTokenizer
 )
 from nanocontext.models.nanochat import NanochatConfig, Nanochat
-from nanocontext.evaluate.coloring import check_validity, get_root_constraint, check_structure, UnsatisfiedException
+from nanocontext.evaluate.coloring import check_validity, get_root_constraint, UnsatisfiedException
 from nanocontext.evaluate.ising import evaluate_moments, gather_magnets, compute_moments
 from nanocontext.train import NanochatTrainerConfig, NanochatTrainer, TrainerSignal
 from nanocontext.sample import NanochatSampler
-from nanocontext.tree import IsingBroadcastPolicy, ColoringBroadcastPolicy, PerfectTreeConfig, BroadcastTree, \
-    BroadcastForest, InferenceTree
+from nanocontext.tree import IsingBroadcastPolicy, ColoringBroadcastPolicy, PerfectTreeConfig, InferenceTree
 from nanocontext.tree.broadcast import markov_forest
 from nanocontext.tree.coloring import ColoringDomain
 from nanocontext.tree.ising import IsingDomain
@@ -70,8 +69,6 @@ def cli():
 @click.option("--hist-height", help="height to use in histogram computation", type=int)
 @click.option("--hist-samples", help="number of samples for histogram computation", type=int)
 @click.option("--sample-batch", help="batch size for sampling", type=int)
-# @click.option("--dist", "dist_type", help="type of training distribution", default="full",
-#               type=click.Choice(["full", "block"]))
 @click.option("--data", "data_mode", help="data mode", default="stream",
               type=click.Choice(["stream", "sample"]))
 @click.option("--summary", "summary_mode", help="summary mode for training", default="disabled",
