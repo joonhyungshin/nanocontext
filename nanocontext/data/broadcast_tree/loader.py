@@ -1,8 +1,7 @@
 from nanocontext.data.common import tokens_to_data
-from nanocontext.tree import BroadcastPolicy, LazyBroadcastTree, ColoringBroadcastPolicy
-from nanocontext.utils import get_numpy_rng, uniform_slices_from_concatenation, d_order
+from nanocontext.tree import BroadcastPolicy, LazyBroadcastTree, PerfectTreeConfig
+from nanocontext.utils import get_numpy_rng, uniform_slices_from_concatenation
 
-from .tree import PerfectTreeConfig, block_autoregressive_tree
 from .tokenizer import SummaryTokenizer, PerfectTreeTokenizer
 
 
@@ -23,21 +22,6 @@ class BroadcastTreeStreamer:
             if beginning:
                 beginning = False
                 token_start_idx = 0
-
-    def tokenized_markov_subtrees_stream(self, batch_height=None):
-        while True:
-            tree_sequence = block_autoregressive_tree(self.tree_config, self.policy, batch_height=batch_height)
-            leaf_idx = 0
-            for tree in tree_sequence:
-                tokens = []
-                if leaf_idx == 0:
-                    tokens.append(self.tokenizer.bos_token)
-                else:
-                    zero_cnt = d_order(leaf_idx, self.tree_config.d)
-                    tokens.append(self.tokenizer.punctuation(zero_cnt))
-                leaf_idx += tree.num_leaves
-                tokens.extend(self.tokenizer.tokenize(tree))
-                yield tokens
 
     def tokenized_trees_with_summaries_stream(self, summary_every,
                                               batch_height=None, token_start_idx=0):
@@ -149,13 +133,3 @@ def broadcast_tree_data_loader(tokenizer: PerfectTreeTokenizer, config: PerfectT
         yield from broadcast_tree_sample_data_loader(tokenizer, config, policy, batch_size, seq_len,
                                                      batch_height=batch_height, summary=summary, device=device,
                                                      seed=seed)
-
-
-def block_autoregressive_tree_data_loader(tokenizer: PerfectTreeTokenizer, config: PerfectTreeConfig,
-                                          policy: BroadcastPolicy, batch_size, seq_len,
-                                          batch_height=None, device="cpu"):
-    needed_tokens = batch_size * seq_len + 1
-    streamer = BroadcastTreeStreamer(tokenizer, config, policy)
-    trees = streamer.tokenized_markov_subtrees_stream(batch_height=batch_height)
-    for tokens in uniform_slices_from_concatenation(trees, needed_tokens):
-        yield tokens_to_data(tokens, batch_size, seq_len, device, compact=True)

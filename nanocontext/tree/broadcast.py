@@ -35,10 +35,10 @@ class BroadcastForest:
         if self.root_values is None:
             self.values = [self.policy.broadcast(multi=self.num_trees)[:, np.newaxis]]
         else:
-            self.values = [np.broadcast_to(self.root_values, (self.num_trees, 1))]
+            self.values = [np.broadcast_to(self.root_values, (self.num_trees,))[:, np.newaxis]]
 
     def get_root_values(self):
-        return self.values[0]
+        return self.values[0][:, 0]
 
     def sample(self):
         self._sample_roots()
@@ -238,3 +238,46 @@ class LazyBroadcastTree(AbstractPerfectTree):
             ancestors.reverse()
             for batch_tree, subtree_ancestors in self.subtree_stream(depth, idx, batch_height=batch_height):
                 yield batch_tree, ancestors + subtree_ancestors
+
+
+class InferenceTree(AbstractPerfectTree):
+    def __init__(self, config, leaves):
+        super().__init__(config)
+        self.leaves = leaves
+
+    def value_at(self, depth, idx):
+        return self.leaves[idx] if depth == self.height else None
+
+
+def markov_forest(config: PerfectTreeConfig, policy: BroadcastPolicy, batch_height=None, num_trees=1, seed=None):
+    rng = np.random.default_rng(seed)
+    d, height = config.d, config.height
+    batch_height = min(height, batch_height) if batch_height is not None else height
+    batch_depth = height - batch_height
+    forest = None
+    for tree_idx in range(d ** batch_depth):
+        if tree_idx == 0:
+            root_values = None
+        else:
+            root_values = forest.get_root_values().copy()
+            probs = [1]
+            for i in range(batch_depth):
+                probs.append(config.d - 1 if i == 0 else probs[-1] * config.d)
+            for i in range(batch_depth + 1):
+                probs[i] /= config.d ** batch_depth
+            membership = rng.choice(range(batch_depth, -1, -1), size=num_trees, p=probs)
+            for i in range(batch_depth):
+                target_idx = (membership >= i)
+                for _ in range(2):
+                    root_values[target_idx] = policy.broadcast(root_values[target_idx]).squeeze(0)
+            reset_idx = (membership == batch_depth)
+            root_values[reset_idx] = policy.broadcast(multi=np.sum(reset_idx))
+        batch_conf = PerfectTreeConfig(d, batch_height)
+        forest = BroadcastForest(batch_conf, policy, root_values=root_values, num_trees=num_trees)
+        forest.sample()
+        yield forest
+
+
+def markov_tree(config: PerfectTreeConfig, policy: BroadcastPolicy, batch_height=None, seed=None):
+    for forest in markov_forest(config, policy, batch_height=batch_height, seed=seed):
+        yield forest[0]

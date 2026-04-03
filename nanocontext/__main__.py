@@ -11,12 +11,13 @@ from nanocontext.data.broadcast_tree import (
     PerfectTreeTokenizer
 )
 from nanocontext.models.nanochat import NanochatConfig, Nanochat
-from nanocontext.evaluate.coloring import check_validity, get_root_constraint
+from nanocontext.evaluate.coloring import check_validity, get_root_constraint, check_structure, UnsatisfiedException
 from nanocontext.evaluate.ising import evaluate_moments, gather_magnets, compute_moments
 from nanocontext.train import NanochatTrainerConfig, NanochatTrainer, TrainerSignal
 from nanocontext.sample import NanochatSampler
 from nanocontext.tree import IsingBroadcastPolicy, ColoringBroadcastPolicy, PerfectTreeConfig, BroadcastTree, \
-    BroadcastForest
+    BroadcastForest, InferenceTree
+from nanocontext.tree.broadcast import markov_forest
 from nanocontext.tree.coloring import ColoringDomain
 from nanocontext.tree.ising import IsingDomain
 from nanocontext.utils import (
@@ -255,19 +256,24 @@ def evaluate(d, height, eval_height, samples, sample_batch, model_path, seed):
 @click.option("-k", "--colors", "k", help="number of colors for coloring experiment", type=int)
 @click.option("--height", help="height of a tree", type=int, required=True)
 @click.option("--samples", help="number of samples to generate", default=1024, type=int)
+@click.option("--markov-height", help="height when sampled using the Markov process", type=int)
 @click.option("--seed", help="random seed", type=int)
-def simulate(d, height, rho, k, samples, seed):
+def simulate(d, height, rho, k, samples, markov_height, seed):
     if (rho is None and k is None) or not (rho is None or k is None):
         raise ValueError("exactly one of k (coloring) or rho (Ising) must be given")
     rng = RNGManager(seed=seed)
-    echo(f"Simulating with seed: {rng.seed}")
     tree_conf = PerfectTreeConfig(d=d, height=height)
+    markov_height = min(markov_height, height) if markov_height is not None else height
+    markov_kwargs = dict(batch_height=markov_height, num_trees=samples, seed=rng.global_numpy_rng)
+    echo(f"Simulating with seed: {rng.seed}")
+    echo(f"{d}-ary tree with height {height} and batch height {markov_height}")
+
     if rho is not None:
         echo(f"Ising experiment with rho: {rho}")
         policy = IsingBroadcastPolicy(rho, seed=rng.global_numpy_rng)
-        forest = BroadcastForest(tree_conf, policy, num_trees=samples)
-        forest.sample()
-        magnet = np.sum(forest.values[-1], axis=1) / math.sqrt(d ** height)
+        magnet = np.zeros(samples)
+        for forest in markov_forest(tree_conf, policy, **markov_kwargs):
+            magnet += np.sum(forest.values[-1], axis=1) / math.sqrt(d ** height)
         var, kurtosis = compute_moments(magnet)
         echo(f"Variance: {var}")
         echo(f"Kurtosis: {kurtosis}")
@@ -275,14 +281,30 @@ def simulate(d, height, rho, k, samples, seed):
         echo(f"Coloring experiment with k: {k}")
         policy = ColoringBroadcastPolicy(k, seed=rng.global_numpy_rng)
         free_count = 0
-        forest = BroadcastForest(tree_conf, policy, num_trees=samples)
-        forest.sample()
+        constrained_count = 0
+        unsat_total_count = 0
+        unsat_count = {i: 0 for i in range(height - markov_height)}
+        leaves = np.empty((samples, d ** height))
+        batch_leaves = d ** markov_height
+        for j, forest in enumerate(markov_forest(tree_conf, policy, **markov_kwargs)):
+            leaves[:, j * batch_leaves:(j + 1) * batch_leaves] = forest.values[-1]
         for i in range(samples):
-            tree = forest[i]
-            if get_root_constraint(tree, policy.domain, only_leaves=True) is None:
-                free_count += 1
+            tree = InferenceTree(tree_conf, leaves[i])
+            try:
+                constraint = get_root_constraint(tree, k)
+                if constraint is None:
+                    free_count += 1
+                else:
+                    constrained_count += 1
+            except UnsatisfiedException as e:
+                unsat_total_count += 1
+                unsat_count[e.depth] += 1
         echo(f"Free trees: {free_count}")
-        echo(f"Constraint trees: {samples - free_count}")
+        echo(f"Constrained trees: {constrained_count}")
+        echo(f"Unsatisfied trees: {unsat_total_count}")
+        if unsat_total_count > 0:
+            for i in range(height - markov_height):
+                echo(f"  at depth {i}: {unsat_count[i]}")
 
 
 def model_hyperparams_from_layers(n_layers, n_heads=None, n_kv_heads=None, n_embd=None):

@@ -1,7 +1,7 @@
 import torch
 import torch.distributed as dist
 
-from nanocontext.tree import ValueDomain, PerfectTreeConfig, AbstractOrderedTree
+from nanocontext.tree import PerfectTreeConfig, AbstractOrderedTree
 from nanocontext.data.broadcast_tree import Engine
 from nanocontext.utils import ddp_world_size
 
@@ -16,13 +16,13 @@ class InvalidStructureException(Exception):
     pass
 
 
-def get_color_constraint(tree: AbstractOrderedTree, node, domain: ValueDomain, depth, only_leaves=False):
-    colors = set(range(domain.get_size()))
+def get_color_constraint(tree: AbstractOrderedTree, node, num_colors, depth, only_leaves=False):
+    colors = set(range(num_colors))
     value = tree.get_value(node)
     if value is not None and (not only_leaves or tree.num_children(node) == 0):
         return value
     for child in tree.children_stream(node):
-        child_constraint = get_color_constraint(tree, child, domain, depth + 1)
+        child_constraint = get_color_constraint(tree, child, num_colors, depth + 1, only_leaves=only_leaves)
         if child_constraint is not None:
             colors.discard(child_constraint)
     if len(colors) == 0:
@@ -42,11 +42,11 @@ def check_subtree_structure(tree: AbstractOrderedTree, node, config: PerfectTree
         check_subtree_structure(tree, child, config, depth + 1)
 
 
-def get_root_constraint(tree: AbstractOrderedTree, domain: ValueDomain, only_leaves=False):
+def get_root_constraint(tree: AbstractOrderedTree, num_colors, only_leaves=False):
     root = tree.get_root()
     if root is None:
         raise InvalidStructureException()
-    return get_color_constraint(tree, root, domain, 0, only_leaves=only_leaves)
+    return get_color_constraint(tree, root, num_colors, 0, only_leaves=only_leaves)
 
 
 def check_structure(tree: AbstractOrderedTree, config: PerfectTreeConfig):
@@ -74,7 +74,7 @@ def check_validity(engine: Engine, prompt, total_samples, max_tokens, config: Pe
         for tree in trees:
             try:
                 check_structure(tree, config)
-                constraint = get_root_constraint(tree, tokenizer.domain)
+                constraint = get_root_constraint(tree, tokenizer.domain.get_size())
                 if constraint is None:
                     stat_tensor[3] += 1
                 else:

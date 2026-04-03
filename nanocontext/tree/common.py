@@ -169,8 +169,9 @@ class AbstractPerfectTree(AbstractOrderedTree):
 
     def children_stream(self, node):
         depth, idx = node
-        for i in range(self.d):
-            yield depth + 1, idx * self.d + i
+        if depth < self.height:
+            for i in range(self.d):
+                yield depth + 1, idx * self.d + i
 
     def num_children(self, node):
         depth, idx = node
