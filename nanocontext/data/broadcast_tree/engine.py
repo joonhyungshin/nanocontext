@@ -41,7 +41,7 @@ class Engine:
 
     def patch_tree_token(self, tree_token, tree_config: PerfectTreeConfig):
         d, height = tree_config.d, tree_config.height
-        bos_fix = 0 if tree_token[0] == self.tokenizer.bos_token else 1
+        bos_fix = 0 if len(tree_token) > 0 and tree_token[0] == self.tokenizer.bos_token else 1
         for idx in range(1, d ** (height - 1)):
             zero_cnt = d_order(idx, d) + 1
             punc_idx = idx * (d + 1) - bos_fix
