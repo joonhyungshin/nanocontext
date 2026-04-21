@@ -1,3 +1,5 @@
+import torch
+
 from nanocontext.data.common import tokens_to_data
 from nanocontext.tree import BroadcastPolicy, LazyBroadcastTree, PerfectTreeConfig
 from nanocontext.utils import get_numpy_rng, uniform_slices_from_concatenation
@@ -56,27 +58,29 @@ class BroadcastTreeStreamer:
 
 def broadcast_tree_stream_data_loader(tokenizer: PerfectTreeTokenizer, config: PerfectTreeConfig,
                                       policy: BroadcastPolicy, batch_size, seq_len,
-                                      batch_height=None, summary=False, device="cpu"):
+                                      batch_height=None, summary_every=None, device="cpu"):
     streamer = BroadcastTreeStreamer(tokenizer, config, policy)
-    if summary:
+    if summary_every is not None:
         if not isinstance(tokenizer, SummaryTokenizer):
             raise ValueError("tokenizer does not support summarizing")
-        needed_tokens = batch_size * (seq_len + 1)
-        summary_len = len(tokenizer.init_summary_tokens(config))
-        content_len = seq_len + 1 - 2 * summary_len
-        if content_len <= 0:
-            raise ValueError("context size too small")
-        stream = streamer.tokenized_trees_with_summaries_stream(content_len, batch_height=batch_height)
-        _, _, all_tokens = next(stream)
-        for num_trees, tokens, summary_write in stream:
-            all_tokens += tokens + summary_write
-            if len(all_tokens) == needed_tokens:
-                x, y = tokens_to_data(all_tokens, batch_size, seq_len, device, compact=False)
-                y = y.clone()
-                y[:, :summary_len - 1] = -1
-                yield x, y
-                all_tokens = []
-            all_tokens += summary_write
+        stream = streamer.tokenized_trees_with_summaries_stream(summary_every, batch_height=batch_height)
+        _, _, last_summary = next(stream)
+        while True:
+            all_tokens = []
+            mask_len = []
+            for _ in range(batch_size):
+                batch_tokens = last_summary
+                mask_len.append([len(batch_tokens) - 1])
+                while len(batch_tokens) <= seq_len:
+                    _, tokens, summary_write = next(stream)
+                    batch_tokens += tokens + summary_write
+                    last_summary = summary_write
+                all_tokens.extend(batch_tokens[:seq_len + 1])
+            x, y = tokens_to_data(all_tokens, batch_size, seq_len, device, compact=False)
+            y = y.clone()
+            mask = torch.arange(seq_len, device=y.device) < torch.tensor(mask_len, device=y.device)
+            y[mask] = -1
+            yield x, y
     else:
         needed_tokens = batch_size * seq_len + 1
         trees = streamer.tokenized_trees_stream(batch_height=batch_height)
@@ -86,32 +90,32 @@ def broadcast_tree_stream_data_loader(tokenizer: PerfectTreeTokenizer, config: P
 
 def broadcast_tree_sample_data_loader(tokenizer: PerfectTreeTokenizer, config: PerfectTreeConfig,
                                       policy: BroadcastPolicy, batch_size, seq_len,
-                                      batch_height=None, summary=False, device="cpu", seed=None):
+                                      batch_height=None, summary_every=None, device="cpu", seed=None):
     rng = get_numpy_rng(seed, local=True)
     d, height = config.d, config.height
     num_tokens = (d ** (height - 1)) * (d + 1)
     streamer = BroadcastTreeStreamer(tokenizer, config, policy)
-    if summary:
+    if summary_every is not None:
         if not isinstance(tokenizer, SummaryTokenizer):
             raise ValueError("tokenizer does not support summarizing")
-        summary_len = len(tokenizer.init_summary_tokens(config))
-        content_len = seq_len + 1 - 2 * summary_len
-        if content_len <= 0:
-            raise ValueError("context size too small")
         while True:
             tokens = []
+            mask_len = []
             for _ in range(batch_size):
                 start_idx = rng.integers(0, num_tokens - 1)
-                stream = streamer.tokenized_trees_with_summaries_stream(content_len,
+                stream = streamer.tokenized_trees_with_summaries_stream(summary_every,
                                                                         batch_height=batch_height,
                                                                         token_start_idx=start_idx)
-                _, _, all_tokens = next(stream)
-                num_trees, cur_tokens, summary_write = next(stream)
-                all_tokens += cur_tokens + summary_write
-                tokens.extend(all_tokens)
+                _, _, batch_tokens = next(stream)
+                mask_len.append([len(batch_tokens) - 1])
+                while len(batch_tokens) <= seq_len:
+                    num_trees, cur_tokens, summary_write = next(stream)
+                    batch_tokens += cur_tokens + summary_write
+                tokens.extend(batch_tokens[:seq_len + 1])
             x, y = tokens_to_data(tokens, batch_size, seq_len, device, compact=False)
             y = y.clone()
-            y[:, :summary_len - 1] = -1
+            mask = torch.arange(seq_len, device=y.device) < torch.tensor(mask_len, device=y.device)
+            y[mask] = -1
             yield x, y
     else:
         while True:
@@ -125,11 +129,12 @@ def broadcast_tree_sample_data_loader(tokenizer: PerfectTreeTokenizer, config: P
 
 def broadcast_tree_data_loader(tokenizer: PerfectTreeTokenizer, config: PerfectTreeConfig,
                                policy: BroadcastPolicy, batch_size, seq_len,
-                               batch_height=None, mode="stream", summary=False, device="cpu", seed=None):
+                               batch_height=None, mode="stream", summary_every=-1, device="cpu", seed=None):
     if mode == "stream":
         yield from broadcast_tree_stream_data_loader(tokenizer, config, policy, batch_size, seq_len,
-                                                     batch_height=batch_height, summary=summary, device=device)
+                                                     batch_height=batch_height, summary_every=summary_every,
+                                                     device=device)
     else:
         yield from broadcast_tree_sample_data_loader(tokenizer, config, policy, batch_size, seq_len,
-                                                     batch_height=batch_height, summary=summary, device=device,
-                                                     seed=seed)
+                                                     batch_height=batch_height, summary_every=summary_every,
+                                                     device=device, seed=seed)

@@ -57,7 +57,7 @@ def check_structure(tree: AbstractOrderedTree, config: PerfectTreeConfig):
 
 
 def check_validity(engine: Engine, prompt, total_samples, max_tokens, config: PerfectTreeConfig,
-                   batch_samples=None, patch=False):
+                   batch_samples=None, patch=False, max_summary_tokens=64):
     world_size = ddp_world_size()
     num_samples = (total_samples + world_size - 1) // world_size
     batch_samples = batch_samples or num_samples
@@ -68,9 +68,12 @@ def check_validity(engine: Engine, prompt, total_samples, max_tokens, config: Pe
         actual_batch_samples = min(num_samples - i, batch_samples)
         if patch:
             trees = engine.generate_patched_tree(prompt, max_tokens, config,
-                                                 num_samples=actual_batch_samples, allow_many=True)
+                                                 num_samples=actual_batch_samples,
+                                                 max_context_tokens=max_summary_tokens,
+                                                 allow_many=True)
         else:
-            trees = engine.generate_tree(prompt, max_tokens, num_samples=actual_batch_samples, allow_many=False)
+            trees = engine.generate_tree(prompt, max_tokens, num_samples=actual_batch_samples,
+                                         max_context_tokens=max_summary_tokens, allow_many=False)
         for tree in trees:
             try:
                 check_structure(tree, config)

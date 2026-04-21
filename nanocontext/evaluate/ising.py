@@ -10,7 +10,7 @@ from nanocontext.utils import ddp_world_size
 
 @torch.inference_mode()
 def sample_magnets(engine: Engine, prompt, num_samples, max_tokens,
-                   batch_samples=None):
+                   batch_samples=None, max_summary_tokens=64):
     batch_samples = batch_samples or num_samples
     magnet = torch.zeros(num_samples, device=engine.device)
     tokenizer = engine.tokenizer
@@ -21,7 +21,8 @@ def sample_magnets(engine: Engine, prompt, num_samples, max_tokens,
         for token_tensor in engine.generate_tree_tokens_tensor_stream(prompt,
                                                                       max_tokens=max_tokens,
                                                                       allow_many=True,
-                                                                      num_samples=actual_batch_samples):
+                                                                      num_samples=actual_batch_samples,
+                                                                      max_context_tokens=max_summary_tokens):
             spin_tensor = (token_tensor == pos_token).int() - (token_tensor == neg_token).int()
             magnet[i:i + actual_batch_samples] += spin_tensor
     return magnet

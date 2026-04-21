@@ -189,6 +189,37 @@ class SummaryTokenizer(PerfectTreeTokenizer):
     def init_summary_tokens(self, config: PerfectTreeConfig):
         return self.tokenize_summary(self.init_summary(config), config)
 
+    def decode_trees_stream(self, tokens):
+        # Make bos_token in the beginning optional... (due to summary)
+        current_tree = LinkedOrderedTree(domain=self.domain)
+        current_node = current_tree.root
+        summary_context = False
+        for token in tokens:
+            if summary_context:
+                if token == self.summary_end_token:
+                    summary_context = False
+                else:
+                    continue
+            if token == self.bos_token:
+                if not current_tree.is_singleton():
+                    yield current_tree
+                current_tree = LinkedOrderedTree(domain=self.domain)
+                current_node = current_tree.root
+            elif token == self.summary_start_token:
+                summary_context = True
+            else:
+                token_name, shift = self.decode_variable_token(token)
+                if token_name == self.VAL_TOKEN_NAME:
+                    current_node.create_child(self.domain.index_to_value(shift))
+                elif token_name == self.PUNC_TOKEN_NAME:
+                    for i in range(shift):
+                        current_node, created = current_node.get_parent_or_create()
+                        if created:
+                            current_tree.root = current_node
+                    for i in range(shift):
+                        current_node = current_node.create_child()
+        yield current_tree
+
 
 class SegmentSummaryTokenizer(SummaryTokenizer):
     bos_token = 0

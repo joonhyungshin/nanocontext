@@ -35,7 +35,7 @@ class TrainerSignal(Enum):
     POST_OPTIM_STEP = 2
 
 
-# TODO: make it stateful?
+# TODO: checkpointing?
 class NanochatTrainer:
     def __init__(self, config, model, dataloader, seed=None):
         self.config = config

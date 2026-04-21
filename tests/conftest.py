@@ -108,47 +108,59 @@ def coloring_cpt_streamer(config, coloring_policy, coloring_cpt_tokenizer):
 @pytest.fixture
 def ising_data_loader(config, ising_policy, ising_tokenizer):
     data_loader = broadcast_tree_data_loader(ising_tokenizer, config, ising_policy,
-                                             16, 64, summary=False)
+                                             16, 64, summary_every=None)
     return data_loader
 
 
 @pytest.fixture
 def ising_data_sample_loader(config, ising_policy, ising_tokenizer):
     data_loader = broadcast_tree_data_loader(ising_tokenizer, config, ising_policy,
-                                             16, 64, summary=False, mode="sample")
+                                             16, 64, summary_every=None, mode="sample")
     return data_loader
 
 
 @pytest.fixture
 def coloring_data_loader(config, coloring_policy, coloring_tokenizer):
     data_loader = broadcast_tree_data_loader(coloring_tokenizer, config, coloring_policy,
-                                             16, 64, summary=False)
+                                             16, 64, summary_every=None)
     return data_loader
 
 
 @pytest.fixture
 def ising_cpt_data_loader(config, ising_policy, ising_cpt_tokenizer):
+    summary_len = len(ising_cpt_tokenizer.init_summary_tokens(config))
+    seq_len = 64
+    summary_every = seq_len + 1 - 2 * summary_len
     data_loader = broadcast_tree_data_loader(ising_cpt_tokenizer, config, ising_policy,
-                                             16, 64, summary=True)
+                                             16, 64, summary_every=summary_every)
     return data_loader
 
 
 @pytest.fixture
 def ising_cpt_sample_data_loader(config, ising_policy, ising_cpt_tokenizer):
+    summary_len = len(ising_cpt_tokenizer.init_summary_tokens(config))
+    seq_len = 64
+    summary_every = seq_len + 1 - 2 * summary_len
     data_loader = broadcast_tree_data_loader(ising_cpt_tokenizer, config, ising_policy,
-                                             16, 64, mode="sample", summary=True)
+                                             16, 64, mode="sample", summary_every=summary_every)
     return data_loader
 
 
 @pytest.fixture
 def coloring_cpt_sample_data_loader(config, coloring_policy, coloring_cpt_tokenizer):
+    summary_len = len(coloring_cpt_tokenizer.init_summary_tokens(config))
+    seq_len = 64
+    summary_every = seq_len + 1 - 2 * summary_len
     data_loader = broadcast_tree_data_loader(coloring_cpt_tokenizer, config, coloring_policy,
-                                             16, 64, mode="sample", summary=True)
+                                             16, 64, mode="sample", summary_every=summary_every)
     return data_loader
 
 
 @pytest.fixture
 def coloring_cpt_stream_data_loader(config, coloring_policy, coloring_cpt_tokenizer):
+    summary_len = len(coloring_cpt_tokenizer.init_summary_tokens(config))
+    seq_len = 64
+    summary_every = seq_len + 1 - 2 * summary_len
     data_loader = broadcast_tree_data_loader(coloring_cpt_tokenizer, config, coloring_policy,
-                                             16, 64, mode="stream", summary=True)
+                                             16, 64, mode="stream", summary_every=summary_every)
     return data_loader

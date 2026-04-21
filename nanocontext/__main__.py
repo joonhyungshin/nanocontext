@@ -73,6 +73,7 @@ def cli():
               type=click.Choice(["stream", "sample"]))
 @click.option("--summary", "summary_mode", help="summary mode for training", default="disabled",
               type=click.Choice(["disabled", "segment", "path"]))
+@click.option("--summary-every", help="summarize every few steps", type=int)
 @click.option("--seed", help="random seed", type=int)
 def train(d, rho, k, height, device_batch_size, total_batch_size,
           context_len, vocab_size, layers, heads, kv_heads, model_dim, rotary_seq_len,
@@ -83,7 +84,7 @@ def train(d, rho, k, height, device_batch_size, total_batch_size,
           eval_every, eval_height, eval_samples,
           hist_every, hist_height, hist_samples, sample_batch,
           batch_height, sample_every, sample_max_tokens,
-          data_mode, summary_mode, seed):
+          data_mode, summary_mode, summary_every, seed):
     if (rho is None and k is None) or not (rho is None or k is None):
         raise ValueError("exactly one of k (coloring) or rho (Ising) must be given")
     rng = RNGManager(seed=seed)
@@ -106,10 +107,14 @@ def train(d, rho, k, height, device_batch_size, total_batch_size,
     model_conf = NanochatConfig(**model_kwargs)
     trainer_conf = NanochatTrainerConfig(**trainer_kwargs)
     tree_conf = PerfectTreeConfig(**tree_kwargs)
-    enable_summary = summary_mode != "disabled"
     with ddp_context():
         policy, policy_conf = get_policy(rho, k, rng.local_numpy_rng)
         tokenizer = get_tokenizer(summary_mode, vocab_size, policy.get_domain())
+        if summary_mode == "disabled" or not isinstance(tokenizer, SummaryTokenizer):
+            summary_every = None
+        elif summary_every is None:
+            summary_len = len(tokenizer.init_summary_tokens(tree_conf))
+            summary_every = context_len + 1 - 2 * summary_len
         prompt = make_prompt(tokenizer, tree_conf)
         device = device_to_use()
         world_size = ddp_world_size()
@@ -126,7 +131,7 @@ def train(d, rho, k, height, device_batch_size, total_batch_size,
             num_iterations = target_tokens // total_batch_size
         dataloader = get_dataloader(tree_conf, policy,
                                     device_batch_size, context_len, batch_height, tokenizer,
-                                    summary=enable_summary, data_mode=data_mode, device=device,
+                                    summary_every=summary_every, data_mode=data_mode, device=device,
                                     seed=rng.local_numpy_rng)
         sampler = NanochatSampler(model, max_context_len=context_len, seed=rng.local_torch_rng(device))
         engine = get_engine(tokenizer, sampler)
@@ -192,7 +197,7 @@ def generate(d, height,
     echo(f"generating with seed: {rng.seed}")
     echo(f"using model: {model_path}")
     tree_kwargs = dict(d=d, height=height)
-    gen_kwargs = dict(num_samples=samples, temperature=temperature, top_k=top_k)
+    gen_kwargs = dict(num_samples=samples, temperature=temperature, top_k=top_k, max_context_tokens=64)
     tree_conf = PerfectTreeConfig(**tree_kwargs)
     device = device_to_use()
     engine = load_engine(model_path, device, seed=rng.global_torch_rng(device))
@@ -403,7 +408,7 @@ def sample_validate(sample_every, sample_max_tokens, engine, prompt, step, num_i
     if sample_every is not None and (step % sample_every == 0 or step == num_iterations):
         model.eval()
         echo("Plain sample:")
-        tree = engine.generate_tree(prompt, sample_max_tokens)[0]
+        tree = engine.generate_tree(prompt, sample_max_tokens, max_context_tokens=64)[0]
         if tree.is_singleton():
             echo("(empty)")
         else:
@@ -461,8 +466,8 @@ def make_prompt(tokenizer: PerfectTreeTokenizer, config: PerfectTreeConfig):
 
 
 def get_engine(tokenizer: PerfectTreeTokenizer, sampler):
-    if isinstance(tokenizer, SummaryTokenizer):
-        return StatefulEngine(tokenizer, sampler)
+    # if isinstance(tokenizer, SummaryTokenizer):
+    #     return StatefulEngine(tokenizer, sampler)
     return SimpleEngine(tokenizer, sampler)
 
 
@@ -493,11 +498,11 @@ def get_tokenizer(summary_mode, vocab_size, domain):
 
 
 def get_dataloader(config: PerfectTreeConfig, policy, device_batch_size, context_len, batch_height, tokenizer,
-                   data_mode="stream", summary=False, device="cpu", seed=None):
+                   data_mode="stream", summary_every=-1, device="cpu", seed=None):
     dataloader_kwargs = dict(tokenizer=tokenizer, config=config, policy=policy, batch_size=device_batch_size,
                              seq_len=context_len, batch_height=batch_height, mode=data_mode, device=device,
                              seed=seed)
-    return broadcast_tree_data_loader(**dataloader_kwargs, summary=summary)
+    return broadcast_tree_data_loader(**dataloader_kwargs, summary_every=summary_every)
 
 
 cli()

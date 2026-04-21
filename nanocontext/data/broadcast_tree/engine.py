@@ -9,7 +9,7 @@ from nanocontext.tree import PerfectTreeConfig
 from nanocontext.tree.coloring import ColoringDomain
 from nanocontext.tree.ising import IsingDomain
 
-from .tokenizer import PerfectTreeTokenizer, SegmentSummaryTokenizer, PathSummaryTokenizer
+from .tokenizer import PerfectTreeTokenizer, SegmentSummaryTokenizer, PathSummaryTokenizer, SummaryTokenizer
 
 
 class Engine:
@@ -63,19 +63,31 @@ class Engine:
 
 
 class SimpleEngine(Engine):
+    def __init__(self, tokenizer, sampler):
+        super().__init__(tokenizer, sampler)
+        if isinstance(tokenizer, SummaryTokenizer):
+            self.context_kwargs = dict(
+                context_start_token=tokenizer.summary_start_token,
+                context_end_token=tokenizer.summary_end_token,
+            )
+        else:
+            self.context_kwargs = {}
+
     def generate_tree_tokens_tensor_stream(self, prompt, num_samples=1, allow_many=False, **kwargs):
         end_token = None if allow_many else self.tokenizer.bos_token
         yield from self.sampler.generate_tensor(prompt, num_samples=num_samples, end_token=end_token,
-                                                **kwargs)
+                                                **self.context_kwargs, **kwargs)
 
     def generate_tree_tokens_tensor(self, prompt, max_tokens, num_samples=1, allow_many=False, **kwargs):
         end_token = None if allow_many else self.tokenizer.bos_token
         return self.sampler.generate_batch_tensor(prompt, max_tokens,
-                                                  num_samples=num_samples, end_token=end_token, **kwargs)
+                                                  num_samples=num_samples, end_token=end_token,
+                                                  **self.context_kwargs, **kwargs)
 
     def generate_tree_tokens(self, prompt, max_tokens, num_samples=1, allow_many=False, **kwargs):
         end_token = None if allow_many else self.tokenizer.bos_token
-        return self.sampler.generate_batch(prompt, max_tokens, num_samples=num_samples, end_token=end_token, **kwargs)
+        return self.sampler.generate_batch(prompt, max_tokens, num_samples=num_samples, end_token=end_token,
+                                           **self.context_kwargs, **kwargs)
 
 
 class StatefulEngine(Engine):
@@ -95,18 +107,18 @@ class StatefulEngine(Engine):
                                                                num_samples=num_samples,
                                                                end_token=end_token,
                                                                always_start=beginning, **kwargs)
-            yield tokens_tensor[:, summary_len:max_tokens]
+            yield tokens_tensor[:, :content_len]
             num_states += 1
-            if not allow_many and (tokens_tensor[:, max_tokens - 1] == end_token).all():
+            if not allow_many and (tokens_tensor[:, content_len - 1] == end_token).all():
                 break
             if max_states is not None and num_states >= max_states:
                 break
-            prompt = tokens_tensor[:, max_tokens:]
+            prompt = tokens_tensor[:, content_len:]
             beginning = False
 
     def generate_tree_tokens_tensor_stream(self, prompt, num_samples=1, max_tokens=None, allow_many=False, **kwargs):
         summary_len, content_len = self.get_summary_and_context_len(prompt)
-        max_states = (max_tokens + content_len - 1) // content_len
+        max_states = (max_tokens + content_len - 1) // content_len if max_tokens is not None else None
         num_tokens = 0
         for tokens_tensor in self.generate_tokens_tensor_batch_stream(prompt,
                                                                       num_samples=num_samples,
@@ -168,13 +180,17 @@ def save_engine(engine: Engine, filename):
     min_context_len = engine.sampler.min_context_len
     max_context_len = engine.sampler.max_context_len
     if isinstance(engine, SimpleEngine):
-        summary = "disabled"
-    elif isinstance(tokenizer, SegmentSummaryTokenizer):
+        engine_type = "simple"
+    elif isinstance(engine, StatefulEngine):
+        engine_type = "stateful"
+    else:
+        raise ValueError("cannot save engine: unknown engine type")
+    if isinstance(tokenizer, SegmentSummaryTokenizer):
         summary = "segment"
     elif isinstance(tokenizer, PathSummaryTokenizer):
         summary = "path"
     else:
-        raise ValueError("cannot save engine: unknown engine type")
+        summary = "disabled"
     if isinstance(domain, IsingDomain):
         domain = {
             "type": "ising"
@@ -187,6 +203,7 @@ def save_engine(engine: Engine, filename):
     else:
         raise ValueError("cannot save engine: unknown domain")
     state_dict = {
+        "engine": engine_type,
         "summary": summary,
         "max_vocab_size": tokenizer.max_vocab_size,
         "min_context_len": min_context_len,
@@ -206,6 +223,7 @@ def load_engine(filename, device=None, seed=None):
     state_dict = torch.load(filename, map_location=device)
     min_context_len = state_dict["min_context_len"]
     max_context_len = state_dict["max_context_len"]
+    engine_type = state_dict["engine"]
     summary = state_dict["summary"]
     domain_dict = state_dict["domain"]
     max_vocab_size = state_dict["max_vocab_size"]
@@ -218,15 +236,18 @@ def load_engine(filename, device=None, seed=None):
         domain = ColoringDomain(domain_dict["k"])
     else:
         raise ValueError("unknown domain")
+    if engine_type == "simple":
+        engine_class = SimpleEngine
+    elif engine_type == "stateful":
+        engine_class = StatefulEngine
+    else:
+        raise ValueError("unknown engine type")
     if summary == "disabled":
         tokenizer = PerfectTreeTokenizer(max_vocab_size, domain)
-        engine_class = SimpleEngine
     elif summary == "segment":
         tokenizer = SegmentSummaryTokenizer(max_vocab_size, domain)
-        engine_class = StatefulEngine
     elif summary == "path":
         tokenizer = PathSummaryTokenizer(max_vocab_size, domain)
-        engine_class = StatefulEngine
     else:
         raise ValueError("unknown summary type")
     if model_type != "nanochat":
