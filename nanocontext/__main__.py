@@ -112,9 +112,10 @@ def train(d, rho, k, height, device_batch_size, total_batch_size,
         tokenizer = get_tokenizer(summary_mode, vocab_size, policy.get_domain())
         if summary_mode == "disabled" or not isinstance(tokenizer, SummaryTokenizer):
             summary_every = None
-        elif summary_every is None:
+        else:
             summary_len = len(tokenizer.init_summary_tokens(tree_conf))
-            summary_every = context_len + 1 - 2 * summary_len
+            max_summary_every = context_len + 1 - 2 * summary_len
+            summary_every = min(max_summary_every, summary_every or max_summary_every)
         prompt = make_prompt(tokenizer, tree_conf)
         device = device_to_use()
         world_size = ddp_world_size()
