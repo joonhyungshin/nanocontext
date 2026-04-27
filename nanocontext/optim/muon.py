@@ -1,6 +1,8 @@
 """
 Muon optimizer from Keller et al.
 Adapted from nanochat.
+Portions of this code are used under the MIT License. Copyright (c) 2025 Andrej Karpathy.
+See https://github.com/karpathy/nanochat/blob/8c896614656a7fb94209b3634d13180f4b01a513/nanochat/muon.py
 """
 import torch
 import torch.distributed as dist

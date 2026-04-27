@@ -1,6 +1,8 @@
 """
 Adapted from nanochat. By Keller, @vagrawal, et al.
 Not a general optimizer! But works for our specific use.
+Portions of this code are used under the MIT License. Copyright (c) 2025 Andrej Karpathy.
+See https://github.com/karpathy/nanochat/blob/8c896614656a7fb94209b3634d13180f4b01a513/nanochat/adamw.py
 """
 import torch
 import torch.distributed as dist
