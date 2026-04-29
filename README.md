@@ -86,6 +86,7 @@ Remember that to use GPUs you should change the environment from `dsi-cpu` to `d
 ```shell
 pixi run -e dsi-cuda python -m nanocontext train -d 3 --height 3 --rho 0.9 --layers 10 --num-iterations 3000 --context-size 1024 --save-to model.pt
 ```
+Note that [Distributed Data Parallel](https://docs.pytorch.org/tutorials/intermediate/ddp_tutorial.html) is supported for leveraging multiple GPUs. Simply run the above command with [`torchrun`](https://docs.pytorch.org/docs/stable/elastic/quickstart.html).
 
 ### Generating trees
 
