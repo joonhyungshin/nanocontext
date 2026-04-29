@@ -23,9 +23,6 @@ class AbstractOrderedTree:
     def value_to_char(self, value):
         raise NotImplementedError
 
-    def value_domain_size(self):
-        raise NotImplementedError
-
     def ancestors_stream(self, node):
         node = self.get_parent(node)
         while node is not None:
@@ -105,9 +102,9 @@ class LinkedOrderedTree(AbstractOrderedTree):
     def is_singleton(self):
         return len(self.root.children) == 0
 
-    def __init__(self, domain=None):
+    def __init__(self, value_space=None):
         self.root = self.Node()
-        self.domain = domain
+        self.value_space = value_space
 
     def get_root(self):
         return self.root
@@ -130,9 +127,9 @@ class LinkedOrderedTree(AbstractOrderedTree):
                 yield node
 
     def value_to_char(self, value):
-        if value is None or self.domain is None:
+        if value is None or self.value_space is None:
             return "#"
-        return self.domain.value_to_char(value)
+        return self.value_space.state_to_char(value)
 
 
 @dataclass
@@ -227,15 +224,15 @@ class PerfectSubtree(AbstractPerfectTree):
         return self.tree.value_at(self.depth + depth, self.idx * (self.d ** depth) + idx)
 
 
-class ValueDomain:
+class StateSpace:
     def get_size(self):
         raise NotImplementedError
 
-    def value_to_index(self, value):
+    def state_to_index(self, state):
         raise NotImplementedError
 
-    def index_to_value(self, index):
+    def index_to_state(self, index):
         raise NotImplementedError
 
-    def value_to_char(self, value):
+    def state_to_char(self, state):
         raise NotImplementedError

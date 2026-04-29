@@ -6,8 +6,8 @@ from nanocontext.sample import NanochatSampler
 from nanocontext.utils import device_to_use, d_order
 from nanocontext.models.nanochat import NanochatConfig, Nanochat
 from nanocontext.tree import PerfectTreeConfig
-from nanocontext.tree.coloring import ColoringDomain
-from nanocontext.tree.ising import IsingDomain
+from nanocontext.tree.coloring import ColoringSpace
+from nanocontext.tree.ising import IsingSpace
 
 from .tokenizer import PerfectTreeTokenizer, SegmentSummaryTokenizer, PathSummaryTokenizer, SummaryTokenizer
 
@@ -175,7 +175,7 @@ class StatefulEngine(Engine):
 
 def save_engine(engine: Engine, filename):
     tokenizer = engine.tokenizer
-    domain = tokenizer.domain
+    domain = tokenizer.value_space
     model = engine.model
     min_context_len = engine.sampler.min_context_len
     max_context_len = engine.sampler.max_context_len
@@ -191,11 +191,11 @@ def save_engine(engine: Engine, filename):
         summary = "path"
     else:
         summary = "disabled"
-    if isinstance(domain, IsingDomain):
+    if isinstance(domain, IsingSpace):
         domain = {
             "type": "ising"
         }
-    elif isinstance(domain, ColoringDomain):
+    elif isinstance(domain, ColoringSpace):
         domain = {
             "type": "coloring",
             "k": domain.k,
@@ -231,9 +231,9 @@ def load_engine(filename, device=None, seed=None):
     model_type = model_state_dict["type"]
     model_config = model_state_dict["config"]
     if domain_dict["type"] == "ising":
-        domain = IsingDomain()
+        domain = IsingSpace()
     elif domain_dict["type"] == "coloring":
-        domain = ColoringDomain(domain_dict["k"])
+        domain = ColoringSpace(domain_dict["k"])
     else:
         raise ValueError("unknown domain")
     if engine_type == "simple":

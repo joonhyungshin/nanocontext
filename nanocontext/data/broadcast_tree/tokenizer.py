@@ -1,7 +1,7 @@
 from nanocontext.data.common import BaseTokenizer
 from nanocontext.utils import d_order, d_divide
 from nanocontext.tree import (
-    AbstractPerfectTree, LazyBroadcastTree, LinkedOrderedTree, PerfectTreeConfig, ValueDomain, ColoringBroadcastPolicy
+    AbstractPerfectTree, LazyBroadcastTree, LinkedOrderedTree, PerfectTreeConfig, StateSpace, ColoringBroadcastChannel
 )
 
 
@@ -11,9 +11,9 @@ class PerfectTreeTokenizer(BaseTokenizer):
 
     variable_tokens = [PUNC_TOKEN_NAME, VAL_TOKEN_NAME]
 
-    def __init__(self, max_vocab_size, domain: ValueDomain):
+    def __init__(self, max_vocab_size, value_space: StateSpace):
         super().__init__(max_vocab_size)
-        self.domain = domain
+        self.value_space = value_space
 
     def punctuation(self, jump_height):
         return self.get_variable_token(self.PUNC_TOKEN_NAME, jump_height)
@@ -25,12 +25,12 @@ class PerfectTreeTokenizer(BaseTokenizer):
         return None
 
     def tokenize_value(self, value):
-        return self.get_variable_token(self.VAL_TOKEN_NAME, self.domain.value_to_index(value))
+        return self.get_variable_token(self.VAL_TOKEN_NAME, self.value_space.state_to_index(value))
 
     def decode_value_token(self, token):
         token_name, shift = self.decode_variable_token(token)
         if token_name == self.VAL_TOKEN_NAME:
-            return self.domain.index_to_value(shift)
+            return self.value_space.index_to_state(shift)
         return None
 
     def _get_punc_token(self, tree, leaf_idx):
@@ -85,18 +85,18 @@ class PerfectTreeTokenizer(BaseTokenizer):
 
     def decode_trees_stream(self, tokens):
         # Make bos_token in the beginning optional... (due to summary)
-        current_tree = LinkedOrderedTree(domain=self.domain)
+        current_tree = LinkedOrderedTree(value_space=self.value_space)
         current_node = current_tree.root
         for token in tokens:
             if token == self.bos_token:
                 if not current_tree.is_singleton():
                     yield current_tree
-                current_tree = LinkedOrderedTree(domain=self.domain)
+                current_tree = LinkedOrderedTree(value_space=self.value_space)
                 current_node = current_tree.root
             else:
                 token_name, shift = self.decode_variable_token(token)
                 if token_name == self.VAL_TOKEN_NAME:
-                    current_node.create_child(self.domain.index_to_value(shift))
+                    current_node.create_child(self.value_space.index_to_state(shift))
                 elif token_name == self.PUNC_TOKEN_NAME:
                     for i in range(shift):
                         current_node, created = current_node.get_parent_or_create()
@@ -129,7 +129,7 @@ class SummaryTokenizer(PerfectTreeTokenizer):
 
     def tokenize_value(self, value, summary=False):
         token_name = self.SUMMARY_VAL_TOKEN_NAME if summary else self.VAL_TOKEN_NAME
-        return self.get_variable_token(token_name, self.domain.value_to_index(value))
+        return self.get_variable_token(token_name, self.value_space.state_to_index(value))
 
     def jump_height(self, token):
         token_name, shift = self.decode_variable_token(token)
@@ -140,7 +140,7 @@ class SummaryTokenizer(PerfectTreeTokenizer):
     def decode_value_token(self, token):
         token_name, shift = self.decode_variable_token(token)
         if token_name in [self.VAL_TOKEN_NAME, self.SUMMARY_VAL_TOKEN_NAME]:
-            return self.domain.index_to_value(shift)
+            return self.value_space.index_to_state(shift)
         return None
 
     def tokenize_summary_stream(self, summary, config: PerfectTreeConfig):
@@ -176,7 +176,7 @@ class SummaryTokenizer(PerfectTreeTokenizer):
         token_stream = self.tokenize_lazy_stream(tree, token_start_idx=token_start_idx,
                                                  batch_height=batch_height, prepend_bos=prepend_bos)
         for idx, token_data in enumerate(token_stream):
-            if isinstance(tree.policy, ColoringBroadcastPolicy) and summary[0][-1][0] is not None:
+            if isinstance(tree.channel, ColoringBroadcastChannel) and summary[0][-1][0] is not None:
                 assert summary[0][-1][0] * 5 + 5 != token_data[0]
             token_idx = token_start_idx + idx
             if token_idx in summary_indices:
@@ -191,7 +191,7 @@ class SummaryTokenizer(PerfectTreeTokenizer):
 
     def decode_trees_stream(self, tokens):
         # Make bos_token in the beginning optional... (due to summary)
-        current_tree = LinkedOrderedTree(domain=self.domain)
+        current_tree = LinkedOrderedTree(value_space=self.value_space)
         current_node = current_tree.root
         summary_context = False
         for token in tokens:
@@ -203,14 +203,14 @@ class SummaryTokenizer(PerfectTreeTokenizer):
             if token == self.bos_token:
                 if not current_tree.is_singleton():
                     yield current_tree
-                current_tree = LinkedOrderedTree(domain=self.domain)
+                current_tree = LinkedOrderedTree(value_space=self.value_space)
                 current_node = current_tree.root
             elif token == self.summary_start_token:
                 summary_context = True
             else:
                 token_name, shift = self.decode_variable_token(token)
                 if token_name == self.VAL_TOKEN_NAME:
-                    current_node.create_child(self.domain.index_to_value(shift))
+                    current_node.create_child(self.value_space.index_to_state(shift))
                 elif token_name == self.PUNC_TOKEN_NAME:
                     for i in range(shift):
                         current_node, created = current_node.get_parent_or_create()
@@ -276,7 +276,7 @@ class SegmentSummaryTokenizer(SummaryTokenizer):
         if token != self.bos_token:
             token_name, shift = self.decode_variable_token(token)
             if token_name == self.VAL_TOKEN_NAME:
-                summary_data[-1][1].append(self.domain.index_to_value(shift))
+                summary_data[-1][1].append(self.value_space.index_to_state(shift))
                 ctx["cur_subtree_leaf_idx"] += 1
                 ctx["leaf_idx"] += 1
             elif token_name == self.PUNC_TOKEN_NAME:

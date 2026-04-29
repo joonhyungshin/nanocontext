@@ -15,10 +15,10 @@ from nanocontext.evaluate.coloring import check_validity, get_root_constraint, U
 from nanocontext.evaluate.ising import evaluate_moments, gather_magnets, compute_moments
 from nanocontext.train import NanochatTrainerConfig, NanochatTrainer, TrainerSignal
 from nanocontext.sample import NanochatSampler
-from nanocontext.tree import IsingBroadcastPolicy, ColoringBroadcastPolicy, PerfectTreeConfig, InferenceTree
+from nanocontext.tree import IsingBroadcastChannel, ColoringBroadcastChannel, PerfectTreeConfig, InferenceTree
 from nanocontext.tree.broadcast import markov_forest
-from nanocontext.tree.coloring import ColoringDomain
-from nanocontext.tree.ising import IsingDomain
+from nanocontext.tree.coloring import ColoringSpace
+from nanocontext.tree.ising import IsingSpace
 from nanocontext.utils import (
     ddp_context, ddp_world_size, device_to_use, is_main_process, compute_moments,
     main_process, synchronize, RNGManager
@@ -56,7 +56,7 @@ def cli():
 @click.option("--num-iterations", help="number of iterations", type=int)
 @click.option("--param-data-ratio", help="parameter:data ratio", default=20, type=int)
 @click.option("--save-to", help="path to save model", type=str, required=True)
-@click.option("--wandb", "wandb_mode", help="wandb mode", default="online",
+@click.option("--wandb", "wandb_mode", help="wandb mode", default="disabled",
               type=click.Choice(["online", "offline", "disabled"]))
 @click.option("--wandb-log-every", help="wandb log every n steps", default=10, type=int)
 @click.option("--batch-height", help="batch height to stream a tree", type=int)
@@ -108,8 +108,8 @@ def train(d, rho, k, height, device_batch_size, total_batch_size,
     trainer_conf = NanochatTrainerConfig(**trainer_kwargs)
     tree_conf = PerfectTreeConfig(**tree_kwargs)
     with ddp_context():
-        policy, policy_conf = get_policy(rho, k, rng.local_numpy_rng)
-        tokenizer = get_tokenizer(summary_mode, vocab_size, policy.get_domain())
+        channel, channel_conf = get_channel(rho, k, rng.local_numpy_rng)
+        tokenizer = get_tokenizer(summary_mode, vocab_size, channel.get_state_space())
         if summary_mode == "disabled" or not isinstance(tokenizer, SummaryTokenizer):
             summary_every = None
         else:
@@ -130,13 +130,13 @@ def train(d, rho, k, height, device_batch_size, total_batch_size,
             num_params = sum(p.numel() for p in model.parameters())
             target_tokens = param_data_ratio * num_params
             num_iterations = target_tokens // total_batch_size
-        dataloader = get_dataloader(tree_conf, policy,
+        dataloader = get_dataloader(tree_conf, channel,
                                     device_batch_size, context_len, batch_height, tokenizer,
                                     summary_every=summary_every, data_mode=data_mode, device=device,
                                     seed=rng.local_numpy_rng)
         sampler = NanochatSampler(model, max_context_len=context_len, seed=rng.local_torch_rng(device))
         engine = get_engine(tokenizer, sampler)
-        wandb_conf = model_kwargs | trainer_kwargs | policy_conf | {
+        wandb_conf = model_kwargs | trainer_kwargs | channel_conf | {
             "d": d,
             "height": height,
             "device_batch_size": device_batch_size,
@@ -232,18 +232,18 @@ def evaluate(d, height, eval_height, samples, sample_batch, model_path, seed):
         device = device_to_use()
         engine = load_engine(model_path, device, seed=rng.global_torch_rng(device))
         engine.model.eval()
-        domain = engine.tokenizer.domain
+        value_space = engine.tokenizer.value_space
         prompt = make_prompt(engine.tokenizer, tree_conf)
         max_tokens = get_max_tokens(d, eval_height)
 
         echo(f"generating {samples} samples...")
-        if isinstance(domain, IsingDomain):
+        if isinstance(value_space, IsingSpace):
             echo("detected Ising experiment.")
             var, kurtosis = evaluate_moments(engine, prompt, samples, max_tokens,
                                              batch_samples=sample_batch, actual_tokens_hint=d**eval_height)
             echo(f"Variance: {var}")
             echo(f"Kurtosis: {kurtosis}")
-        elif isinstance(domain, ColoringDomain):
+        elif isinstance(value_space, ColoringSpace):
             echo("detected Coloring experiment.")
             stat = check_validity(engine, prompt, samples, max_tokens, eval_tree_conf,
                                   batch_samples=sample_batch, patch=True)
@@ -273,23 +273,23 @@ def simulate(d, height, rho, k, samples, markov_height, seed):
 
     if rho is not None:
         echo(f"Ising experiment with rho: {rho}")
-        policy = IsingBroadcastPolicy(rho, seed=rng.global_numpy_rng)
+        channel = IsingBroadcastChannel(rho, seed=rng.global_numpy_rng)
         magnet = np.zeros(samples)
-        for forest in markov_forest(tree_conf, policy, **markov_kwargs):
+        for forest in markov_forest(tree_conf, channel, **markov_kwargs):
             magnet += np.sum(forest.values[-1], axis=1) / math.sqrt(d ** height)
         var, kurtosis = compute_moments(magnet)
         echo(f"Variance: {var}")
         echo(f"Kurtosis: {kurtosis}")
     else:
         echo(f"Coloring experiment with k: {k}")
-        policy = ColoringBroadcastPolicy(k, seed=rng.global_numpy_rng)
+        channel = ColoringBroadcastChannel(k, seed=rng.global_numpy_rng)
         free_count = 0
         constrained_count = 0
         unsat_total_count = 0
         unsat_count = {i: 0 for i in range(height - markov_height)}
         leaves = np.empty((samples, d ** height))
         batch_leaves = d ** markov_height
-        for j, forest in enumerate(markov_forest(tree_conf, policy, **markov_kwargs)):
+        for j, forest in enumerate(markov_forest(tree_conf, channel, **markov_kwargs)):
             leaves[:, j * batch_leaves:(j + 1) * batch_leaves] = forest.values[-1]
         for i in range(samples):
             tree = InferenceTree(tree_conf, leaves[i])
@@ -472,35 +472,35 @@ def get_engine(tokenizer: PerfectTreeTokenizer, sampler):
     return SimpleEngine(tokenizer, sampler)
 
 
-def get_domain(k):
+def get_space(k):
     if k is None:
-        return IsingDomain()
-    return ColoringDomain(k)
+        return IsingSpace()
+    return ColoringSpace(k)
 
 
-def get_policy(rho, k, rng):
+def get_channel(rho, k, rng):
     if rho is not None:
-        return IsingBroadcastPolicy(rho, seed=rng), {
+        return IsingBroadcastChannel(rho, seed=rng), {
             "policy": "Ising",
             "rho": rho,
         }
-    return ColoringBroadcastPolicy(k, seed=rng), {
+    return ColoringBroadcastChannel(k, seed=rng), {
         "policy": "coloring",
         "k": k,
     }
 
 
-def get_tokenizer(summary_mode, vocab_size, domain):
+def get_tokenizer(summary_mode, vocab_size, value_space):
     if summary_mode == "segment":
-        return SegmentSummaryTokenizer(vocab_size, domain)
+        return SegmentSummaryTokenizer(vocab_size, value_space)
     elif summary_mode == "path":
-        return PathSummaryTokenizer(vocab_size, domain)
-    return PerfectTreeTokenizer(vocab_size, domain)
+        return PathSummaryTokenizer(vocab_size, value_space)
+    return PerfectTreeTokenizer(vocab_size, value_space)
 
 
-def get_dataloader(config: PerfectTreeConfig, policy, device_batch_size, context_len, batch_height, tokenizer,
+def get_dataloader(config: PerfectTreeConfig, channel, device_batch_size, context_len, batch_height, tokenizer,
                    data_mode="stream", summary_every=-1, device="cpu", seed=None):
-    dataloader_kwargs = dict(tokenizer=tokenizer, config=config, policy=policy, batch_size=device_batch_size,
+    dataloader_kwargs = dict(tokenizer=tokenizer, config=config, channel=channel, batch_size=device_batch_size,
                              seq_len=context_len, batch_height=batch_height, mode=data_mode, device=device,
                              seed=seed)
     return broadcast_tree_data_loader(**dataloader_kwargs, summary_every=summary_every)

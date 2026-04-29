@@ -1,12 +1,12 @@
 import numpy as np
 
-from . import PerfectSubtree, ValueDomain
+from . import PerfectSubtree, StateSpace
 from .common import AbstractPerfectTree, PerfectTreeConfig
 from ..utils import d_order
 
 
-class BroadcastPolicy:
-    def get_domain(self) -> ValueDomain:
+class BroadcastChannel:
+    def get_state_space(self) -> StateSpace:
         raise NotImplementedError
 
     def broadcast(self, values=None, multi=1) -> np.ndarray:
@@ -14,11 +14,11 @@ class BroadcastPolicy:
 
 
 class BroadcastForest:
-    def __init__(self, config: PerfectTreeConfig, policy: BroadcastPolicy,
+    def __init__(self, config: PerfectTreeConfig, channel: BroadcastChannel,
                  num_trees=1, root_values=None):
         self.config = config
-        self.policy = policy
-        self.domain = policy.get_domain()
+        self.channel = channel
+        self.value_space = channel.get_state_space()
         self.num_trees = num_trees
         self.root_values = root_values
         self.values = []
@@ -33,7 +33,7 @@ class BroadcastForest:
 
     def _sample_roots(self):
         if self.root_values is None:
-            self.values = [self.policy.broadcast(multi=self.num_trees)[:, np.newaxis]]
+            self.values = [self.channel.broadcast(multi=self.num_trees)[:, np.newaxis]]
         else:
             self.values = [np.broadcast_to(self.root_values, (self.num_trees,))[:, np.newaxis]]
 
@@ -44,7 +44,7 @@ class BroadcastForest:
         self._sample_roots()
         cur_size = 1
         for i in range(self.height):
-            children = self.policy.broadcast(self.values[-1], multi=self.d).swapaxes(0, 1)
+            children = self.channel.broadcast(self.values[-1], multi=self.d).swapaxes(0, 1)
             self.values.append(children.reshape((self.num_trees, -1), order='F'))
             cur_size *= self.d
 
@@ -58,7 +58,7 @@ class BroadcastForest:
         return self.values[depth][tree_idx, idx].item()
 
     def get_tree(self, tree_idx):
-        tree = BroadcastTree(config=self.config, policy=self.policy)
+        tree = BroadcastTree(config=self.config, channel=self.channel)
         tree._forest = self
         tree._tree_idx = tree_idx
         return tree
@@ -72,18 +72,18 @@ class BroadcastForest:
         msg = ""
         for j in range(self.num_trees):
             for i, layer in enumerate(self.values):
-                msg += (" " * (self.d ** (self.height - i) - 1)).join([self.domain.value_to_char(node)
+                msg += (" " * (self.d ** (self.height - i) - 1)).join([self.value_space.state_to_char(node)
                                                                        for node in layer[j]])
                 msg += "\n"
         return msg
 
 
 class BroadcastTree(AbstractPerfectTree):
-    def __init__(self, config: PerfectTreeConfig, policy: BroadcastPolicy,
+    def __init__(self, config: PerfectTreeConfig, channel: BroadcastChannel,
                  root_value=None):
         super().__init__(config)
-        self.policy = policy
-        self.domain = policy.get_domain()
+        self.channel = channel
+        self.value_space = channel.get_state_space()
         self.root_value = root_value
         self._forest = None
         self._tree_idx = None
@@ -91,7 +91,7 @@ class BroadcastTree(AbstractPerfectTree):
     @property
     def forest(self):
         if self._forest is None:
-            self._forest = BroadcastForest(config=self.config, policy=self.policy, root_values=self.root_value)
+            self._forest = BroadcastForest(config=self.config, channel=self.channel, root_values=self.root_value)
             self._tree_idx = 0
         return self._forest
 
@@ -102,19 +102,19 @@ class BroadcastTree(AbstractPerfectTree):
         return self.forest.get_value(self._tree_idx, depth, idx)
 
     def value_to_char(self, value):
-        self.domain.value_to_char(value)
+        self.value_space.state_to_char(value)
 
 
 class LazyBroadcastTree(AbstractPerfectTree):
-    def __init__(self, config: PerfectTreeConfig, policy: BroadcastPolicy):
+    def __init__(self, config: PerfectTreeConfig, channel: BroadcastChannel):
         super().__init__(config)
-        self.policy = policy
+        self.channel = channel
         self.sampled_values = [{} for _ in range(self.height + 1)]
         self.sampled_subtrees = [{} for _ in range(self.height + 1)]
 
     def broadcast_subtree(self, height, root_value=None) -> AbstractPerfectTree:
         subtree_conf = PerfectTreeConfig(d=self.d, height=height)
-        subtree = BroadcastTree(subtree_conf, self.policy, root_value=root_value)
+        subtree = BroadcastTree(subtree_conf, self.channel, root_value=root_value)
         subtree.sample()
         return subtree
 
@@ -123,7 +123,7 @@ class LazyBroadcastTree(AbstractPerfectTree):
         assert depth == 0 or idx // self.d in self.sampled_values[depth - 1]
         assert idx not in self.sampled_values[depth]
         value = self.get_value_or_sample(depth - 1, idx // self.d) if depth > 0 else None
-        self.sampled_values[depth][idx] = self.policy.broadcast(value).item()
+        self.sampled_values[depth][idx] = self.channel.broadcast(value).item()
         return self.sampled_values[depth][idx]
 
     def is_sampled(self, depth, idx):
@@ -213,16 +213,16 @@ class LazyBroadcastTree(AbstractPerfectTree):
         num_batches = self.d ** (target_height - batch_height)
         ancestors = []
         for i in range(target_height - batch_height):
-            cur_value = self.policy.broadcast(cur_value).item()
+            cur_value = self.channel.broadcast(cur_value).item()
             ancestors.append(cur_value)
         for tree_pos in range(num_batches):
             if tree_pos > 0:
                 zero_cnt = d_order(tree_pos, self.d)
                 for i in range(target_height - batch_height - zero_cnt, target_height - batch_height):
                     cur_value = ancestors[i - 1]
-                    ancestors[i] = self.policy.broadcast(cur_value).item()
+                    ancestors[i] = self.channel.broadcast(cur_value).item()
                 cur_value = ancestors[-1]
-            subtree_root_value = self.policy.broadcast(cur_value).item()
+            subtree_root_value = self.channel.broadcast(cur_value).item()
             batch_tree = self.broadcast_subtree(batch_height, root_value=subtree_root_value)
             self.sampled_values[depth][idx] = ancestors[0] if ancestors else subtree_root_value
             yield batch_tree, ancestors.copy()
@@ -249,7 +249,7 @@ class InferenceTree(AbstractPerfectTree):
         return self.leaves[idx] if depth == self.height else None
 
 
-def markov_forest(config: PerfectTreeConfig, policy: BroadcastPolicy, batch_height=None, num_trees=1, seed=None):
+def markov_forest(config: PerfectTreeConfig, channel: BroadcastChannel, batch_height=None, num_trees=1, seed=None):
     rng = np.random.default_rng(seed)
     d, height = config.d, config.height
     batch_height = min(height, batch_height) if batch_height is not None else height
@@ -269,15 +269,15 @@ def markov_forest(config: PerfectTreeConfig, policy: BroadcastPolicy, batch_heig
             for i in range(batch_depth):
                 target_idx = (membership >= i)
                 for _ in range(2):
-                    root_values[target_idx] = policy.broadcast(root_values[target_idx]).squeeze(0)
+                    root_values[target_idx] = channel.broadcast(root_values[target_idx]).squeeze(0)
             reset_idx = (membership == batch_depth)
-            root_values[reset_idx] = policy.broadcast(multi=np.sum(reset_idx))
+            root_values[reset_idx] = channel.broadcast(multi=np.sum(reset_idx))
         batch_conf = PerfectTreeConfig(d, batch_height)
-        forest = BroadcastForest(batch_conf, policy, root_values=root_values, num_trees=num_trees)
+        forest = BroadcastForest(batch_conf, channel, root_values=root_values, num_trees=num_trees)
         forest.sample()
         yield forest
 
 
-def markov_tree(config: PerfectTreeConfig, policy: BroadcastPolicy, batch_height=None, seed=None):
-    for forest in markov_forest(config, policy, batch_height=batch_height, seed=seed):
+def markov_tree(config: PerfectTreeConfig, channel: BroadcastChannel, batch_height=None, seed=None):
+    for forest in markov_forest(config, channel, batch_height=batch_height, seed=seed):
         yield forest[0]

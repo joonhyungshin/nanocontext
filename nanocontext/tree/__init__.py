@@ -1,13 +1,13 @@
 from .common import LinkedOrderedTree, AbstractOrderedTree, AbstractPerfectTree, PerfectTreeConfig, PerfectSubtree, \
-    ValueDomain
-from .broadcast import BroadcastPolicy, BroadcastTree, LazyBroadcastTree, BroadcastForest, InferenceTree
-from .ising import IsingBroadcastPolicy
-from .coloring import ColoringBroadcastPolicy
+    StateSpace
+from .broadcast import BroadcastChannel, BroadcastTree, LazyBroadcastTree, BroadcastForest, InferenceTree
+from .ising import IsingBroadcastChannel
+from .coloring import ColoringBroadcastChannel
 
 
 __all__ = [
     "LinkedOrderedTree", "AbstractOrderedTree", "AbstractPerfectTree", "PerfectTreeConfig", "PerfectSubtree",
-    "LazyBroadcastTree", "BroadcastPolicy", "BroadcastTree", "BroadcastForest", "ValueDomain", "InferenceTree",
-    "IsingBroadcastPolicy",
-    "ColoringBroadcastPolicy",
+    "LazyBroadcastTree", "BroadcastChannel", "BroadcastTree", "BroadcastForest", "StateSpace", "InferenceTree",
+    "IsingBroadcastChannel",
+    "ColoringBroadcastChannel",
 ]

@@ -77,7 +77,7 @@ def check_validity(engine: Engine, prompt, total_samples, max_tokens, config: Pe
         for tree in trees:
             try:
                 check_structure(tree, config)
-                constraint = get_root_constraint(tree, tokenizer.domain.get_size())
+                constraint = get_root_constraint(tree, tokenizer.value_space.get_size())
                 if constraint is None:
                     stat_tensor[3] += 1
                 else:
