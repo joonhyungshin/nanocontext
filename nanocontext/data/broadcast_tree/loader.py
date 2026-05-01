@@ -56,7 +56,7 @@ class BroadcastTreeStreamer:
                     tokens_window = []
             beginning = False
             tree_idx += 1
-        yield tree_idx, tokens_window, None
+        yield tree_idx, tokens_window, []
 
 
 def broadcast_tree_stream_data_loader(tokenizer: PerfectTreeTokenizer, config: PerfectTreeConfig,

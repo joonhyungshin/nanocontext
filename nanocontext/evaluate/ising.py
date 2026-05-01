@@ -6,7 +6,7 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 
-from nanocontext.data.broadcast_tree import Engine, SummaryTokenizer
+from nanocontext.data.broadcast_tree import Engine, SummaryTokenizer, StatefulEngine
 from nanocontext.data.broadcast_tree.loader import BroadcastTreeStreamer
 from nanocontext.evaluate import infer_summary_every
 from nanocontext.tree import PerfectTreeConfig, IsingBroadcastChannel
@@ -86,7 +86,9 @@ def evaluate_perplexity(engine: Engine, total_samples: int,
     streamer = BroadcastTreeStreamer(tokenizer, tree_config, channel)
     if not isinstance(tokenizer, SummaryTokenizer):
         summary_every = None
-    else:
+    elif summary_every is None:
+        if isinstance(engine, StatefulEngine):
+            summary_every = engine.content_len
         prompt = tokenizer.init_summary_tokens(tree_config)
         summary_every = summary_every or infer_summary_every(engine, prompt, tree_config)
         # summary_len = len(tokenizer.init_summary_tokens(tree_config))
@@ -101,7 +103,7 @@ def evaluate_perplexity(engine: Engine, total_samples: int,
                 _, __, all_tokens = next(stream)
                 summary_len = len(all_tokens)
                 for _, tokens, summary in stream:
-                    all_tokens += tokens + (summary or [])
+                    all_tokens += tokens + summary
                     tokens_len = len(all_tokens)
                     x = all_tokens[:-1] + [0] * (context_len - tokens_len + 1)
                     y = [-1] * (summary_len - 1) + all_tokens[summary_len:] + [-1] * (context_len - tokens_len + 1)
