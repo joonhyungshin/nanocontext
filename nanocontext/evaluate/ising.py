@@ -10,7 +10,7 @@ from nanocontext.data.broadcast_tree import Engine, SummaryTokenizer
 from nanocontext.data.broadcast_tree.loader import BroadcastTreeStreamer
 from nanocontext.evaluate import infer_summary_every
 from nanocontext.tree import PerfectTreeConfig, IsingBroadcastChannel
-from nanocontext.utils import ddp_world_size
+from nanocontext.utils import ddp_world_size, autocast
 
 
 @torch.inference_mode()
@@ -134,7 +134,8 @@ def evaluate_perplexity(engine: Engine, total_samples: int,
                     beginning = False
 
     def total_cross_entropy(x, y):
-        logits = model(x)
+        with autocast():
+            logits = model(x)
         return F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1),
                                ignore_index=-1, reduction="sum")
 
