@@ -13,9 +13,10 @@ class BroadcastTreeStreamer:
         self.channel = channel
         self.tree_config = tree_config
 
-    def tokenized_trees_stream(self, token_start_idx=0, batch_height=None):
+    def tokenized_trees_stream(self, token_start_idx=0, batch_height=None, num_trees=None):
         beginning = True
-        while True:
+        tree_idx = 0
+        while num_trees is None or tree_idx < num_trees:
             tree = LazyBroadcastTree(self.tree_config, self.channel)
             token_stream = self.tokenizer.tokenize_lazy_stream(tree, token_start_idx=token_start_idx,
                                                                batch_height=batch_height, prepend_bos=True)
@@ -24,18 +25,19 @@ class BroadcastTreeStreamer:
             if beginning:
                 beginning = False
                 token_start_idx = 0
+            tree_idx += 1
 
     def tokenized_trees_with_summaries_stream(self, summary_every,
-                                              batch_height=None, token_start_idx=0):
+                                              batch_height=None, token_start_idx=0, num_trees=None):
         if not isinstance(self.tokenizer, SummaryTokenizer):
             raise ValueError("tokenizer does not support summarizing")
         tokens_window = []
         beginning = True
-        num_trees = 0
+        tree_idx = 0
         config = self.tree_config
         num_tokens = (config.d ** (config.height - 1)) * (config.d + 1)
         token_start_idx %= num_tokens
-        while True:
+        while num_trees is None or tree_idx < num_trees:
             tree = LazyBroadcastTree(config, self.channel)
             if beginning:
                 summary_indices = range(token_start_idx, num_tokens, summary_every)
@@ -50,10 +52,11 @@ class BroadcastTreeStreamer:
                                                                                prepend_bos=not beginning):
                 tokens_window.extend(tokens)
                 if len(tokens_window) == 0 or len(tokens_window) >= summary_every:
-                    yield num_trees, tokens_window, summary
+                    yield tree_idx, tokens_window, summary
                     tokens_window = []
             beginning = False
-            num_trees += 1
+            tree_idx += 1
+        yield tree_idx, tokens_window, None
 
 
 def broadcast_tree_stream_data_loader(tokenizer: PerfectTreeTokenizer, config: PerfectTreeConfig,
@@ -129,7 +132,7 @@ def broadcast_tree_sample_data_loader(tokenizer: PerfectTreeTokenizer, config: P
 
 def broadcast_tree_data_loader(tokenizer: PerfectTreeTokenizer, config: PerfectTreeConfig,
                                channel: BroadcastChannel, batch_size, seq_len,
-                               batch_height=None, mode="stream", summary_every=-1, device="cpu", seed=None):
+                               batch_height=None, mode="stream", summary_every=None, device="cpu", seed=None):
     if mode == "stream":
         yield from broadcast_tree_stream_data_loader(tokenizer, config, channel, batch_size, seq_len,
                                                      batch_height=batch_height, summary_every=summary_every,

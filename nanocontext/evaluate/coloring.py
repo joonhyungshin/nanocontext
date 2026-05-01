@@ -1,5 +1,6 @@
 import torch
 import torch.distributed as dist
+from torch.distributions import Categorical
 
 from nanocontext.tree import PerfectTreeConfig, AbstractOrderedTree
 from nanocontext.data.broadcast_tree import Engine
@@ -100,3 +101,27 @@ def check_validity(engine: Engine, prompt, total_samples, max_tokens, config: Pe
         "free": stat_tensor[3],
     }
     return stat
+
+
+@torch.inference_mode()
+def evaluate_entropy(engine: Engine, prompt, total_samples, max_tokens, config: PerfectTreeConfig,
+                     batch_samples=None):
+    sampler = engine.sampler
+    world_size = ddp_world_size()
+    num_samples = (total_samples + world_size - 1) // world_size
+    batch_samples = batch_samples or num_samples
+    total_samples = num_samples * world_size
+    entropy = torch.tensor([0], device=engine.device, dtype=torch.float)
+    for i in range(0, num_samples, batch_samples):
+        actual_batch_samples = min(num_samples - i, batch_samples)
+        num_tokens = 0
+        for _, logits in sampler.stream(prompt, num_samples=actual_batch_samples):
+            law = Categorical(logits=logits)
+            entropy += law.entropy().sum()
+            num_tokens += 1
+            if num_tokens >= max_tokens:
+                break
+    if world_size > 1:
+        dist.all_reduce(entropy, op=dist.ReduceOp.SUM)
+    entropy = entropy.item() / total_samples
+    return entropy

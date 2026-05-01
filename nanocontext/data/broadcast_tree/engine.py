@@ -1,4 +1,5 @@
 from dataclasses import asdict
+from typing import Generator
 
 import torch
 
@@ -25,11 +26,17 @@ class Engine:
     def device(self):
         return self.sampler.device
 
-    def generate_tree_tokens_tensor_stream(self, prompt, num_samples=1, max_tokens=None, allow_many=False, **kwargs):
+    def generate_tree_tokens_tensor_stream(self, prompt, num_samples=1, max_tokens=None, allow_many=False,
+                                           **kwargs) -> Generator[torch.Tensor]:
         raise NotImplementedError
 
-    def generate_tree_tokens_tensor(self, prompt, max_tokens, num_samples=1, allow_many=False, **kwargs):
+    def generate_tree_tokens_tensor(self, prompt, max_tokens, num_samples=1, allow_many=False,
+                                    **kwargs) -> torch.Tensor:
         raise NotImplementedError
+
+    def generate_tree_tokens_stream(self, *args, **kwargs) -> Generator[list]:
+        for tensor in self.generate_tree_tokens_tensor_stream(*args, **kwargs):
+            yield tensor.tolist()
 
     def generate_tree_tokens(self, prompt, max_tokens, num_samples=1, allow_many=False, **kwargs) -> list:
         raise NotImplementedError
@@ -73,21 +80,30 @@ class SimpleEngine(Engine):
         else:
             self.context_kwargs = {}
 
-    def generate_tree_tokens_tensor_stream(self, prompt, num_samples=1, allow_many=False, **kwargs):
+    def generate_tree_tokens_tensor_stream(self, prompt, num_samples=1, allow_many=False,
+                                           ignore_context=True, **kwargs):
         end_token = None if allow_many else self.tokenizer.bos_token
+        if ignore_context:
+            kwargs |= self.context_kwargs
         yield from self.sampler.generate_tensor(prompt, num_samples=num_samples, end_token=end_token,
-                                                **self.context_kwargs, **kwargs)
+                                                **kwargs)
 
-    def generate_tree_tokens_tensor(self, prompt, max_tokens, num_samples=1, allow_many=False, **kwargs):
+    def generate_tree_tokens_tensor(self, prompt, max_tokens, num_samples=1, allow_many=False,
+                                    ignore_context=True, **kwargs):
         end_token = None if allow_many else self.tokenizer.bos_token
+        if ignore_context:
+            kwargs |= self.context_kwargs
         return self.sampler.generate_batch_tensor(prompt, max_tokens,
                                                   num_samples=num_samples, end_token=end_token,
-                                                  **self.context_kwargs, **kwargs)
+                                                  **kwargs)
 
-    def generate_tree_tokens(self, prompt, max_tokens, num_samples=1, allow_many=False, **kwargs):
+    def generate_tree_tokens(self, prompt, max_tokens, num_samples=1, allow_many=False,
+                             ignore_context=True, **kwargs):
         end_token = None if allow_many else self.tokenizer.bos_token
+        if ignore_context:
+            kwargs |= self.context_kwargs
         return self.sampler.generate_batch(prompt, max_tokens, num_samples=num_samples, end_token=end_token,
-                                           **self.context_kwargs, **kwargs)
+                                           **kwargs)
 
 
 class StatefulEngine(Engine):
@@ -96,7 +112,8 @@ class StatefulEngine(Engine):
         content_len = self.sampler.min_context_len + 1 - 2 * summary_len
         return summary_len, content_len
 
-    def generate_tokens_tensor_batch_stream(self, prompt, num_samples=1, allow_many=False, max_states=None, **kwargs):
+    def generate_tokens_tensor_batch_stream(self, prompt, num_samples=1, allow_many=False, max_states=None,
+                                            ignore_context=True, **kwargs):
         summary_len, content_len = self.get_summary_and_context_len(prompt)
         max_tokens = content_len + summary_len
         end_token = None if allow_many else self.tokenizer.bos_token
@@ -107,7 +124,7 @@ class StatefulEngine(Engine):
                                                                num_samples=num_samples,
                                                                end_token=end_token,
                                                                always_start=beginning, **kwargs)
-            yield tokens_tensor[:, :content_len]
+            yield tokens_tensor[:, :content_len] if ignore_context else tokens_tensor
             num_states += 1
             if not allow_many and (tokens_tensor[:, content_len - 1] == end_token).all():
                 break

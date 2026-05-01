@@ -65,7 +65,7 @@ class NanochatSampler:
         while True:
             next_x = self.sample_next_token(logits, temperature=temperature, top_k=top_k)
             next_tokens = next_x[:, 0]
-            yield next_tokens
+            yield next_tokens, logits
 
             if kv_cache.get_pos() > context_shift:
                 context_window[:, context_window_pos] = next_x[:, 0]
@@ -98,7 +98,7 @@ class NanochatSampler:
         completed = torch.tensor(completed, dtype=torch.bool, device=self.device)
         max_context_tokens = max_context_tokens or torch.inf
         max_tokens = max_tokens or torch.inf
-        for _, next_tokens in enumerate(self.stream(tokens, num_samples=num_samples, **kwargs)):
+        for _, (next_tokens, __) in enumerate(self.stream(tokens, num_samples=num_samples, **kwargs)):
             next_tokens = next_tokens.clone()
             next_tokens[completed] = pad_token
             yield next_tokens
