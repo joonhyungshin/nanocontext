@@ -116,6 +116,8 @@ def train(d, rho, k, height, device_batch_size, total_batch_size,
             summary_len = len(tokenizer.init_summary_tokens(tree_conf))
             max_summary_every = context_len + 1 - 2 * summary_len
             summary_every = min(max_summary_every, summary_every or max_summary_every)
+            if summary_every < 1:
+                raise ValueError("context size too small for summary")
         prompt = make_prompt(tokenizer, tree_conf)
         device = device_to_use()
         world_size = ddp_world_size()
@@ -243,7 +245,6 @@ def evaluate(d, height, rho, eval_entropy, eval_height, samples, sample_batch, m
         echo(f"generating {samples} samples...")
         if isinstance(value_space, IsingSpace):
             echo("detected Ising experiment.")
-            channel = IsingBroadcastChannel(rho=rho, seed=rng.local_numpy_rng)
             var, kurtosis = evaluate_moments(engine, prompt, samples, max_tokens,
                                              batch_samples=sample_batch, actual_tokens_hint=d**eval_height)
             echo(f"Variance: {var}")
@@ -251,6 +252,7 @@ def evaluate(d, height, rho, eval_entropy, eval_height, samples, sample_batch, m
             if eval_entropy:
                 if rho is None:
                     raise ValueError("rho must be provided in Ising experiment to evaluate entropy.")
+                channel = IsingBroadcastChannel(rho=rho, seed=rng.local_numpy_rng)
                 perplexity = evaluate_perplexity(engine, samples, eval_tree_conf, channel,
                                                  batch_samples=sample_batch, batch_height=batch_height)
                 echo(f"Cross entropy: {perplexity}")
