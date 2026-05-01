@@ -107,14 +107,15 @@ class SimpleEngine(Engine):
 
 
 class StatefulEngine(Engine):
-    def get_summary_and_context_len(self, prompt):
-        summary_len = len(prompt)
-        content_len = self.sampler.min_context_len + 1 - 2 * summary_len
-        return summary_len, content_len
+    def __init__(self, tokenizer, sampler, summary_len=None, content_len=None):
+        super().__init__(tokenizer, sampler)
+        self.summary_len = summary_len
+        self.content_len = content_len
 
     def generate_tokens_tensor_batch_stream(self, prompt, num_samples=1, allow_many=False, max_states=None,
                                             ignore_context=True, **kwargs):
-        summary_len, content_len = self.get_summary_and_context_len(prompt)
+        summary_len = self.summary_len or len(prompt)
+        content_len = self.content_len or self.sampler.min_context_len + 1 - 2 * summary_len
         max_tokens = content_len + summary_len
         end_token = None if allow_many else self.tokenizer.bos_token
         num_states = 0
@@ -133,14 +134,16 @@ class StatefulEngine(Engine):
             prompt = tokens_tensor[:, content_len:]
             beginning = False
 
-    def generate_tree_tokens_tensor_stream(self, prompt, num_samples=1, max_tokens=None, allow_many=False, **kwargs):
+    def generate_tree_tokens_tensor_stream(self, prompt, num_samples=1, max_tokens=None,
+                                           allow_many=False, **kwargs):
         summary_len, content_len = self.get_summary_and_context_len(prompt)
         max_states = (max_tokens + content_len - 1) // content_len if max_tokens is not None else None
         num_tokens = 0
         for tokens_tensor in self.generate_tokens_tensor_batch_stream(prompt,
                                                                       num_samples=num_samples,
                                                                       max_states=max_states,
-                                                                      allow_many=allow_many, **kwargs):
+                                                                      allow_many=allow_many,
+                                                                      **kwargs):
             _, num_batch_tokens = tokens_tensor.shape
             for i in range(num_batch_tokens):
                 yield tokens_tensor[:, i]
@@ -148,7 +151,8 @@ class StatefulEngine(Engine):
                 if max_tokens is not None and num_tokens >= max_tokens:
                     break
 
-    def generate_tree_tokens_tensor(self, prompt, max_tokens, num_samples=1, allow_many=False, **kwargs):
+    def generate_tree_tokens_tensor(self, prompt, max_tokens, num_samples=1,
+                                    allow_many=False, **kwargs):
         summary_len, content_len = self.get_summary_and_context_len(prompt)
         result = torch.full((num_samples, max_tokens), self.tokenizer.bos_token,
                             dtype=torch.long, device=self.device)
@@ -198,8 +202,13 @@ def save_engine(engine: Engine, filename):
     max_context_len = engine.sampler.max_context_len
     if isinstance(engine, SimpleEngine):
         engine_type = "simple"
+        engine_meta = {}
     elif isinstance(engine, StatefulEngine):
         engine_type = "stateful"
+        engine_meta = {
+            "summary_len": engine.summary_len,
+            "content_len": engine.content_len,
+        }
     else:
         raise ValueError("cannot save engine: unknown engine type")
     if isinstance(tokenizer, SegmentSummaryTokenizer):
@@ -220,7 +229,10 @@ def save_engine(engine: Engine, filename):
     else:
         raise ValueError("cannot save engine: unknown domain")
     state_dict = {
-        "engine": engine_type,
+        "engine": {
+            "type": engine_type,
+            "meta": engine_meta,
+        },
         "summary": summary,
         "max_vocab_size": tokenizer.max_vocab_size,
         "min_context_len": min_context_len,
@@ -240,7 +252,9 @@ def load_engine(filename, device=None, seed=None):
     state_dict = torch.load(filename, map_location=device)
     min_context_len = state_dict["min_context_len"]
     max_context_len = state_dict["max_context_len"]
-    engine_type = state_dict["engine"]
+    engine_data = state_dict["engine"]
+    engine_type = engine_data["type"]
+    engine_meta = engine_data["meta"]
     summary = state_dict["summary"]
     domain_dict = state_dict["domain"]
     max_vocab_size = state_dict["max_vocab_size"]
@@ -276,5 +290,5 @@ def load_engine(filename, device=None, seed=None):
     model.load_state_dict(model_state_dict["parameters"], strict=True, assign=True)
     model.preprocess()
     sampler = NanochatSampler(model, min_context_len, max_context_len, seed=seed)
-    engine = engine_class(tokenizer, sampler)
+    engine = engine_class(tokenizer, sampler, **engine_meta)
     return engine

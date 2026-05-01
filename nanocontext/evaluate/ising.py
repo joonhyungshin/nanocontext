@@ -15,7 +15,7 @@ from nanocontext.utils import ddp_world_size
 
 @torch.inference_mode()
 def sample_magnets(engine: Engine, prompt, num_samples, max_tokens,
-                   batch_samples=None, max_summary_tokens=64):
+                   batch_samples=None, max_summary_tokens=64, **kwargs):
     batch_samples = batch_samples or num_samples
     magnet = torch.zeros(num_samples, device=engine.device)
     tokenizer = engine.tokenizer
@@ -27,18 +27,19 @@ def sample_magnets(engine: Engine, prompt, num_samples, max_tokens,
                                                                       max_tokens=max_tokens,
                                                                       allow_many=True,
                                                                       num_samples=actual_batch_samples,
-                                                                      max_context_tokens=max_summary_tokens):
+                                                                      max_context_tokens=max_summary_tokens,
+                                                                      **kwargs):
             spin_tensor = (token_tensor == pos_token).int() - (token_tensor == neg_token).int()
             magnet[i:i + actual_batch_samples] += spin_tensor
     return magnet
 
 
 def gather_magnets(engine: Engine, prompt, total_samples, max_tokens,
-                   batch_samples=None):
+                   batch_samples=None, **kwargs):
     world_size = ddp_world_size()
     num_samples = (total_samples + world_size - 1) // world_size
     total_samples = num_samples * world_size
-    magnet = sample_magnets(engine, prompt, num_samples, max_tokens, batch_samples=batch_samples)
+    magnet = sample_magnets(engine, prompt, num_samples, max_tokens, batch_samples=batch_samples, **kwargs)
     if world_size > 1:
         magnets = torch.empty(total_samples, dtype=magnet.dtype, device=magnet.device)
         dist.all_gather_into_tensor(magnets, magnet)
@@ -62,9 +63,10 @@ def compute_moments(magnet):
 
 
 def evaluate_moments(engine: Engine, prompt, total_samples, max_tokens,
-                     batch_samples=None, actual_tokens_hint=None):
+                     batch_samples=None, actual_tokens_hint=None, **kwargs):
     """Computes sample variance and excess kurtosis."""
-    magnet_tensor = gather_magnets(engine, prompt, total_samples, max_tokens, batch_samples=batch_samples)
+    magnet_tensor = gather_magnets(engine, prompt, total_samples, max_tokens, batch_samples=batch_samples,
+                                   **kwargs)
     magnet = magnet_tensor.detach().cpu().numpy()
     normalized_magnet = magnet / math.sqrt(actual_tokens_hint or max_tokens)
     return compute_moments(normalized_magnet)

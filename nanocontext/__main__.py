@@ -33,7 +33,7 @@ def cli():
 
 
 @cli.command()
-@click.option("-d", help="number of children of a tree", default=3, type=int)
+@click.option("-d", help="number of children of a tree", type=int, required=True)
 @click.option("--rho", help="correlation for Ising experiment", type=float)
 @click.option("-k", "--colors", "k", help="number of colors for coloring experiment", type=int)
 @click.option("--height", help="height of a tree", type=int, required=True)
@@ -111,6 +111,7 @@ def train(d, rho, k, height, device_batch_size, total_batch_size,
         channel, channel_conf = get_channel(rho, k, rng.local_numpy_rng)
         tokenizer = get_tokenizer(summary_mode, vocab_size, channel.get_state_space())
         if summary_mode == "disabled" or not isinstance(tokenizer, SummaryTokenizer):
+            summary_len = None
             summary_every = None
         else:
             summary_len = len(tokenizer.init_summary_tokens(tree_conf))
@@ -137,7 +138,7 @@ def train(d, rho, k, height, device_batch_size, total_batch_size,
                                     summary_every=summary_every, data_mode=data_mode, device=device,
                                     seed=rng.local_numpy_rng)
         sampler = NanochatSampler(model, max_context_len=context_len, seed=rng.local_torch_rng(device))
-        engine = get_engine(tokenizer, sampler)
+        engine = get_engine(tokenizer, sampler, summary_len, summary_every)
         wandb_conf = model_kwargs | trainer_kwargs | channel_conf | {
             "d": d,
             "height": height,
@@ -148,6 +149,7 @@ def train(d, rho, k, height, device_batch_size, total_batch_size,
             "hist_height": hist_height,
             "hist_samples": hist_samples,
             "summary_mode": summary_mode,
+            "summary_every": summary_every,
             "batch_height": batch_height,
             "data_mode": data_mode,
             "seed": rng.seed,
@@ -215,7 +217,7 @@ def generate(d, height,
 
 
 @cli.command()
-@click.option("-d", help="number of children of a tree", default=3, type=int)
+@click.option("-d", help="number of children of a tree", type=int, required=True)
 @click.option("--height", help="height of a tree", type=int, required=True)
 @click.option("--eval-height", help="height to use in evaluation", type=int)
 @click.option("--entropy", "eval_entropy", help="evaluate entropy", is_flag=True)
@@ -263,7 +265,8 @@ def evaluate(d, height, rho, eval_entropy, eval_height, samples, sample_batch, m
             display_recon_stat(stat)
             echo(f"Valid rate: {stat['constrained'] + stat['free']} / {samples}")
             if eval_entropy:
-                entropy = evaluate_entropy(engine, prompt, samples, max_tokens, eval_tree_conf, batch_samples=sample_batch)
+                entropy = evaluate_entropy(engine, prompt, samples, max_tokens, eval_tree_conf,
+                                           batch_samples=sample_batch)
                 echo(f"Entropy: {entropy}")
         else:
             raise click.ClickException("Unknown domain type")
@@ -482,9 +485,9 @@ def make_prompt(tokenizer: PerfectTreeTokenizer, config: PerfectTreeConfig):
     return [tokenizer.bos_token]
 
 
-def get_engine(tokenizer: PerfectTreeTokenizer, sampler):
-    # if isinstance(tokenizer, SummaryTokenizer):
-    #     return StatefulEngine(tokenizer, sampler)
+def get_engine(tokenizer: PerfectTreeTokenizer, sampler, summary_len, content_len):
+    if isinstance(tokenizer, SummaryTokenizer):
+        return StatefulEngine(tokenizer, sampler, summary_len=summary_len, content_len=content_len)
     return SimpleEngine(tokenizer, sampler)
 
 
