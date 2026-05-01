@@ -129,7 +129,7 @@ def evaluate_perplexity(engine: Engine, total_samples: int,
                     if beginning:
                         y = buffer[1:]
                     else:
-                        y = [-1] * context_len + [buffer[-1]]
+                        y = [-1] * (context_len - 1) + [buffer[-1]]
                     yield x, y
                     beginning = False
 
