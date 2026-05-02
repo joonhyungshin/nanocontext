@@ -112,10 +112,15 @@ class StatefulEngine(Engine):
         self.summary_len = summary_len
         self.content_len = content_len
 
+    def get_summary_and_content_len(self, prompt):
+        summary_len = self.summary_len or len(prompt)
+        max_content_len = self.sampler.min_context_len + 1 - 2 * summary_len
+        content_len = min(max_content_len, self.content_len or max_content_len)
+        return summary_len, content_len
+
     def generate_tokens_tensor_batch_stream(self, prompt, num_samples=1, allow_many=False, max_states=None,
                                             ignore_context=True, **kwargs):
-        summary_len = self.summary_len or len(prompt)
-        content_len = self.content_len or self.sampler.min_context_len + 1 - 2 * summary_len
+        summary_len, content_len = self.get_summary_and_content_len(prompt)
         max_tokens = content_len + summary_len
         end_token = None if allow_many else self.tokenizer.bos_token
         num_states = 0
@@ -136,8 +141,7 @@ class StatefulEngine(Engine):
 
     def generate_tree_tokens_tensor_stream(self, prompt, num_samples=1, max_tokens=None,
                                            allow_many=False, **kwargs):
-        summary_len = self.summary_len or len(prompt)
-        content_len = self.content_len or self.sampler.min_context_len + 1 - 2 * summary_len
+        summary_len, content_len = self.get_summary_and_content_len(prompt)
         max_states = (max_tokens + content_len - 1) // content_len if max_tokens is not None else None
         num_tokens = 0
         for tokens_tensor in self.generate_tokens_tensor_batch_stream(prompt,
@@ -154,8 +158,7 @@ class StatefulEngine(Engine):
 
     def generate_tree_tokens_tensor(self, prompt, max_tokens, num_samples=1,
                                     allow_many=False, **kwargs):
-        summary_len = self.summary_len or len(prompt)
-        content_len = self.content_len or self.sampler.min_context_len + 1 - 2 * summary_len
+        summary_len, content_len = self.get_summary_and_content_len(prompt)
         result = torch.full((num_samples, max_tokens), self.tokenizer.bos_token,
                             dtype=torch.long, device=self.device)
         max_states = (max_tokens + content_len - 1) // content_len
@@ -174,8 +177,7 @@ class StatefulEngine(Engine):
     def generate_tree_tokens(self, prompt, max_tokens, num_samples=1, allow_many=False, **kwargs):
         tree_tokens = [[] for _ in range(num_samples)]
         completed = [False for _ in range(num_samples)]
-        summary_len = self.summary_len or len(prompt)
-        content_len = self.content_len or self.sampler.min_context_len + 1 - 2 * summary_len
+        summary_len, content_len = self.get_summary_and_content_len(prompt)
         max_states = (max_tokens + content_len - 1) // content_len
         for content_tokens in self.generate_tokens_tensor_batch_stream(prompt, num_samples=num_samples,
                                                                        allow_many=allow_many, max_states=max_states,
