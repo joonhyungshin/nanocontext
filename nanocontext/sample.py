@@ -81,9 +81,9 @@ class NanochatSampler:
                 with autocast():
                     logits = self.model(x, kv_cache=kv_cache)[:, -1, :]
 
-    def generate_tensor(self, tokens, max_tokens=None, num_samples=1, max_context_tokens=None, end_token=None,
-                        context_start_token=None, context_end_token=None, always_start=True, pad_token=None,
-                        **kwargs):
+    def generate_tensor_and_logits(self, tokens, max_tokens=None, num_samples=1, max_context_tokens=None,
+                                   end_token=None, context_start_token=None, context_end_token=None,
+                                   always_start=True, pad_token=None, **kwargs):
         if isinstance(tokens, torch.Tensor) and not always_start:
             completed = [end_token is not None and token == end_token for token in tokens[:, -1]]
         else:
@@ -98,10 +98,10 @@ class NanochatSampler:
         completed = torch.tensor(completed, dtype=torch.bool, device=self.device)
         max_context_tokens = max_context_tokens or torch.inf
         max_tokens = max_tokens or torch.inf
-        for _, (next_tokens, __) in enumerate(self.stream(tokens, num_samples=num_samples, **kwargs)):
+        for _, (next_tokens, logits) in enumerate(self.stream(tokens, num_samples=num_samples, **kwargs)):
             next_tokens = next_tokens.clone()
             next_tokens[completed] = pad_token
-            yield next_tokens
+            yield next_tokens, logits
             num_generated[(in_context == -1) & ~completed & (next_tokens != context_start_token)] += 1
             in_context[(next_tokens == context_end_token) & (in_context >= 0)] = -1
             in_context[((next_tokens == context_start_token) & (in_context == -1))
@@ -113,7 +113,7 @@ class NanochatSampler:
                 break
 
     def generate(self, *args, **kwargs):
-        for tokens in self.generate_tensor(*args, **kwargs):
+        for tokens, _ in self.generate_tensor_and_logits(*args, **kwargs):
             yield tokens.tolist()
 
     def generate_batch_tensor(self, tokens, max_tokens, num_samples=1, max_context_tokens=None, end_token=None,
@@ -126,11 +126,11 @@ class NanochatSampler:
         num_generated = torch.zeros((num_samples, 1), dtype=torch.long, device=self.device)
         indices = torch.arange(max_tokens, device=self.device)
         in_context = -torch.ones(num_samples, dtype=torch.long, device=self.device)
-        generator = self.generate_tensor(tokens, max_tokens=max_tokens, num_samples=num_samples,
+        generator = self.generate_tensor_and_logits(tokens, max_tokens=max_tokens, num_samples=num_samples,
                                          max_context_tokens=max_context_tokens, end_token=end_token,
                                          context_start_token=context_start_token, context_end_token=context_end_token,
                                          always_start=always_start, pad_token=pad_token, **kwargs)
-        for _, next_tokens in enumerate(generator):
+        for _, (next_tokens, __) in enumerate(generator):
             is_active = (in_context == -1) & (next_tokens != context_start_token) & (next_tokens != pad_token)
             results[(indices == num_generated) & is_active.unsqueeze(1)] = next_tokens[is_active]
             num_generated[is_active.unsqueeze(1)] += 1

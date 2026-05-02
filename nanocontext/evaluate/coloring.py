@@ -2,8 +2,9 @@ import torch
 import torch.distributed as dist
 from torch.distributions import Categorical
 
+from nanocontext.evaluate import infer_summary_every
 from nanocontext.tree import PerfectTreeConfig, AbstractOrderedTree
-from nanocontext.data.broadcast_tree import Engine
+from nanocontext.data.broadcast_tree import Engine, StatefulEngine
 from nanocontext.utils import ddp_world_size
 
 
@@ -104,7 +105,7 @@ def check_validity(engine: Engine, prompt, total_samples, max_tokens, config: Pe
 
 
 @torch.inference_mode()
-def evaluate_entropy(engine: Engine, prompt, total_samples, max_tokens,
+def evaluate_entropy(engine: Engine, prompt, total_samples, max_tokens, tree_config: PerfectTreeConfig,
                      batch_samples=None):
     sampler = engine.sampler
     world_size = ddp_world_size()
@@ -112,10 +113,31 @@ def evaluate_entropy(engine: Engine, prompt, total_samples, max_tokens,
     batch_samples = batch_samples or num_samples
     total_samples = num_samples * world_size
     entropy = torch.tensor([0], device=engine.device, dtype=torch.float)
+
+    def logits_stream(n):
+        if isinstance(engine, StatefulEngine):
+            summary_len = engine.summary_len or len(prompt)
+            content_len = engine.content_len or infer_summary_every(engine, prompt, tree_config)
+            current_prompt = prompt
+            while True:
+                current_tokens = 0
+                new_prompt = torch.empty((n, summary_len), device=sampler.device, dtype=torch.long)
+                for t, l in sampler.stream(current_prompt, num_samples=n):
+                    yield l
+                    if current_tokens >= content_len:
+                        new_prompt[:, current_tokens - summary_len] = t
+                    current_tokens += 1
+                    if current_tokens >= content_len + summary_len:
+                        break
+                current_prompt = new_prompt
+        else:
+            for _, l in sampler.stream(prompt, num_samples=n):
+                yield l
+
     for i in range(0, num_samples, batch_samples):
         actual_batch_samples = min(num_samples - i, batch_samples)
         num_tokens = 0
-        for _, logits in sampler.stream(prompt, num_samples=actual_batch_samples):
+        for logits in logits_stream(actual_batch_samples):
             law = Categorical(logits=logits)
             entropy += law.entropy().sum()
             num_tokens += 1

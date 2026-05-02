@@ -85,8 +85,9 @@ class SimpleEngine(Engine):
         end_token = None if allow_many else self.tokenizer.bos_token
         if ignore_context:
             kwargs |= self.context_kwargs
-        yield from self.sampler.generate_tensor(prompt, num_samples=num_samples, end_token=end_token,
-                                                **kwargs)
+        for tensor, _ in self.sampler.generate_tensor_and_logits(prompt, num_samples=num_samples, end_token=end_token,
+                                                                 **kwargs):
+            yield tensor
 
     def generate_tree_tokens_tensor(self, prompt, max_tokens, num_samples=1, allow_many=False,
                                     ignore_context=True, **kwargs):
