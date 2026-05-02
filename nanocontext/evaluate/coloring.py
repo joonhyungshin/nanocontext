@@ -125,7 +125,7 @@ def evaluate_entropy(engine: Engine, prompt, total_samples, max_tokens, tree_con
                 for t, l in sampler.stream(current_prompt, num_samples=n):
                     yield l
                     if current_tokens >= content_len:
-                        new_prompt[:, current_tokens - summary_len] = t
+                        new_prompt[:, current_tokens - content_len] = t
                     current_tokens += 1
                     if current_tokens >= content_len + summary_len:
                         break
