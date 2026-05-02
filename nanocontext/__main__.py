@@ -183,6 +183,7 @@ def train(d, rho, k, height, device_batch_size, total_batch_size,
             echo("Training finished")
             echo(f"Elapsed: {ctx['total_training_time'] / 60:.2f}m")
             save_engine(engine, save_to)
+            echo(f"Model saved to: {save_to}")
 
 
 @cli.command()
@@ -265,7 +266,10 @@ def evaluate(d, height, rho, eval_entropy, eval_height, samples, sample_batch, m
             display_recon_stat(stat)
             echo(f"Valid rate: {stat['constrained'] + stat['free']} / {samples}")
             if eval_entropy:
-                entropy = evaluate_entropy(engine, prompt, samples, max_tokens, eval_tree_conf,
+                if isinstance(engine, StatefulEngine) and engine.content_len is not None:
+                    num_summaries = (max_tokens - 1) // engine.content_len
+                    max_tokens += num_summaries * (engine.summary_len or len(prompt))
+                entropy = evaluate_entropy(engine, prompt, samples, max_tokens,
                                            batch_samples=sample_batch)
                 echo(f"Entropy: {entropy}")
         else:

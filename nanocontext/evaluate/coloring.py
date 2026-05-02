@@ -104,7 +104,7 @@ def check_validity(engine: Engine, prompt, total_samples, max_tokens, config: Pe
 
 
 @torch.inference_mode()
-def evaluate_entropy(engine: Engine, prompt, total_samples, max_tokens, config: PerfectTreeConfig,
+def evaluate_entropy(engine: Engine, prompt, total_samples, max_tokens,
                      batch_samples=None):
     sampler = engine.sampler
     world_size = ddp_world_size()
