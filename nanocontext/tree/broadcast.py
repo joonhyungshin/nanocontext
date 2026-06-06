@@ -13,6 +13,15 @@ class BroadcastChannel:
         raise NotImplementedError
 
 
+class FiniteBroadcastChannel(BroadcastChannel):
+    def __init__(self, state_space: StateSpace, kernel: np.ndarray):
+        self.state_space = state_space
+        self.kernel = kernel
+
+    def get_state_space(self):
+        return self.state_space
+
+
 class BroadcastForest:
     def __init__(self, config: PerfectTreeConfig, channel: BroadcastChannel,
                  num_trees=1, root_values=None):
@@ -51,6 +60,9 @@ class BroadcastForest:
     @property
     def sampled(self):
         return len(self.values) == self.height + 1
+
+    def get_values(self, depth: int, idx: int) -> np.ndarray:
+        return self.values[depth][:, idx]
 
     def get_value(self, tree_idx: int, depth: int, idx: int):
         if not self.sampled:

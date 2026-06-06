@@ -1,8 +1,9 @@
 from dataclasses import dataclass
+from typing import Any, Generator
 
 
 class AbstractOrderedTree:
-    def children_stream(self, node):
+    def children_stream(self, node) -> Generator[Any]:
         raise NotImplementedError
 
     def get_parent(self, node):
@@ -22,6 +23,12 @@ class AbstractOrderedTree:
 
     def value_to_char(self, value):
         raise NotImplementedError
+
+    def neighbors_stream(self, node):
+        node = self.get_parent(node)
+        if node is not None:
+            yield node
+        yield from self.children_stream(node)
 
     def ancestors_stream(self, node):
         node = self.get_parent(node)
