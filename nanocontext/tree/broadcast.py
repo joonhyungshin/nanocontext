@@ -1,6 +1,6 @@
 import numpy as np
 
-from . import PerfectSubtree, StateSpace
+from . import PerfectSubtree, StateSpace, AbstractOrderedTree
 from .common import AbstractPerfectTree, PerfectTreeConfig
 from ..utils import d_order
 
@@ -48,6 +48,9 @@ class BroadcastForest:
 
     def get_root_values(self):
         return self.values[0][:, 0]
+
+    def get_leaves(self):
+        return self.values[self.height]
 
     def sample(self):
         self._sample_roots()
@@ -115,6 +118,10 @@ class BroadcastTree(AbstractPerfectTree):
 
     def value_to_char(self, value):
         self.value_space.state_to_char(value)
+
+    @classmethod
+    def from_generic(cls, tree: AbstractOrderedTree):
+        pass
 
 
 class LazyBroadcastTree(AbstractPerfectTree):

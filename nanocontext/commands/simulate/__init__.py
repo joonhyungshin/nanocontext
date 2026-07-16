@@ -1,5 +1,6 @@
 import click
 
+from .evaluate import evaluate
 from .gram import gram
 from .markov import markov
 
@@ -11,3 +12,4 @@ def simulate():
 
 simulate.add_command(gram)
 simulate.add_command(markov)
+simulate.add_command(evaluate)
